@@ -22,15 +22,15 @@ func _ready() -> void:
 
 func add_message(role: String, text: String) -> void:
 	var bubble: Control = load("res://ui/message_bubble.tscn").instantiate()
-	bubble.setup(role, text)
 	_vbox.add_child(bubble)
+	bubble.setup(role, text)
 	await get_tree().process_frame
 	scroll_vertical = get_v_scroll_bar().max_value
 
 func add_tool_card(step: int, tool_name: String, args: String) -> Node:
 	var card: Control = load("res://ui/tool_card.tscn").instantiate()
-	card.setup(step, tool_name, args)
 	_vbox.add_child(card)
+	card.setup(step, tool_name, args)
 	await get_tree().process_frame
 	scroll_vertical = get_v_scroll_bar().max_value
 	return card
