@@ -88,5 +88,5 @@ func _ready() -> void:
 	)
 
 	# Load main UI
-	var app := load("res://ui/app.tscn").instantiate()
+	var app: Node = load("res://ui/app.tscn").instantiate()
 	add_child(app)

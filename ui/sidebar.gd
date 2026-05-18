@@ -96,7 +96,7 @@ func _ready() -> void:
 func _refresh_sessions() -> void:
 	_session_list.clear()
 	if _session_mgr:
-		var sessions := _session_mgr.list_sessions()
+		var sessions: PackedStringArray = _session_mgr.list_sessions()
 		for s in sessions:
 			_session_list.add_item(s)
 		# Highlight current

@@ -61,7 +61,6 @@ func _ready() -> void:
 	_add_label("System Prompt")
 	_system_prompt_edit = TextEdit.new()
 	_system_prompt_edit.custom_minimum_size = Vector2(0, 100)
-	_system_prompt_edit.wrap_mode = TextEdit.LINE_WRAP_BOUNDARY
 	_system_prompt_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	add_child(_system_prompt_edit)
 

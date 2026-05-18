@@ -21,14 +21,14 @@ func _ready() -> void:
 		react_loop.loop_error.connect(_on_error)
 
 func add_message(role: String, text: String) -> void:
-	var bubble := load("res://ui/message_bubble.tscn").instantiate()
+	var bubble: Control = load("res://ui/message_bubble.tscn").instantiate()
 	bubble.setup(role, text)
 	_vbox.add_child(bubble)
 	await get_tree().process_frame
 	scroll_vertical = get_v_scroll_bar().max_value
 
 func add_tool_card(step: int, tool_name: String, args: String) -> Node:
-	var card := load("res://ui/tool_card.tscn").instantiate()
+	var card: Control = load("res://ui/tool_card.tscn").instantiate()
 	card.setup(step, tool_name, args)
 	_vbox.add_child(card)
 	await get_tree().process_frame

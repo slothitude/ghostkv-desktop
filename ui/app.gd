@@ -91,7 +91,7 @@ func _on_session_changed(session_name: String) -> void:
 func _load_session(name: String) -> void:
 	var data: Dictionary = _session_mgr.load_session(name)
 	_current_messages = data.get("messages", [])
-	_chat_view.clear()
+	_chat_view.call("clear")
 
 	for msg in _current_messages:
 		var role: String = msg.get("role", "")

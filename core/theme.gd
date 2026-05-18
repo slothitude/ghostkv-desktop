@@ -16,7 +16,6 @@ func build_theme() -> Theme:
 	var t := Theme.new()
 
 	t.set_color("background", "PanelContainer", BG)
-	t.set_color("background", " VBoxContainer", Color.TRANSPARENT)
 
 	# Base font color
 	t.set_color("font_color", "Label", TEXT)
