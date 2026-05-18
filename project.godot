@@ -1,0 +1,22 @@
+; Engine configuration file.
+; It's best edited using the Godot editor, but can also be edited
+; manually while the engine is not running.
+
+[application]
+
+config/name="GhostKV Desktop"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.6")
+config/icon="res://icon.svg"
+
+[display]
+
+window/size/viewport_width=1200
+window/size/viewport_height=800
+window/size/minimum_width=800
+window/size/minimum_height=600
+window/stretch/mode="canvas_items"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"

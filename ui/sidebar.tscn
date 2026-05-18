@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://ui/sidebar.gd" id="1_sidebar"]
+
+[node name="Sidebar" type="PanelContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+script = ExtResource("1_sidebar")
