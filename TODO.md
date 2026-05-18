@@ -1,4 +1,6 @@
-# GhostKV Desktop — Master TODO
+# GhostKV Desktop — TODO
+
+Master roadmap: `C:\Users\aaron\Desktop\dev\ghostkv\ROADMAP.md` (v1.1.0 section)
 
 ## Done
 - [x] Project skeleton (project.godot, main.gd, scene structure)
@@ -26,42 +28,36 @@
 - [x] Fix: Godot 4.6 parse errors (type inference, enum names)
 - [x] Windows + Android export presets
 
-## TODO
+## Next Up
 
 ### Polish
 - [ ] Loading spinner — animated indicator while awaiting API response
-- [ ] Error display — API errors shown as clear error cards in chat
+- [ ] Error display — API errors shown clearly in chat
 - [ ] Keyboard shortcuts — Ctrl+N new session, Ctrl+S save, Escape stop
 - [ ] Window persistence — remember size/position across restarts
-- [ ] Sound effects — play Kenney click/tap sounds on send and receive
-- [ ] Copy message — right-click context menu or button to copy text
+- [ ] Sound effects — play Kenney click/tap on send/receive
+- [ ] Copy message — right-click or button to copy text
 - [ ] Clear chat — button to clear current session messages
-- [ ] Delete session — remove session from list and disk
+- [ ] Delete session — remove from list and disk
 
-### UX Improvements
-- [ ] Auto-scroll — guarantee chat scrolls to bottom on new messages
-- [ ] Code block rendering — proper monospace blocks with syntax hints
-- [ ] System prompt editor — multiline edit in settings panel
-- [ ] Response streaming — show tokens as they arrive (SSE/chunked)
-- [ ] Token counter — live count in status bar during generation
-- [ ] Stop button — cancel ongoing API request mid-generation
+### UX
+- [ ] Streaming output — show tokens as they arrive
+- [ ] Code block rendering — monospace blocks with syntax hints
+- [ ] Stop button — cancel ongoing API request
 - [ ] Retry button — retry failed messages
 
 ### MCP & Tools
-- [ ] MCP auto-reconnect — reconnect saved servers on startup
-- [ ] Tool argument schema — show input schema for each tool
-- [ ] Tool call history — show full tool history in sidebar
-- [ ] Built-in tools — add basic tools (web search, file read, calculator)
+- [ ] MCP auto-reconnect on startup
+- [ ] Tool argument schema display
+- [ ] Built-in tools — web search, file read, calculator
 
-### Mobile / Android
-- [ ] Responsive layout — sidebar collapse for narrow windows
-- [ ] Sidebar drawer — slide-out drawer on mobile
-- [ ] Touch-friendly sizing — larger tap targets (48dp minimum)
-- [ ] Virtual keyboard handling — resize layout when keyboard appears
-- [ ] Android export — build and test .apk on phone
+### Mobile
+- [ ] Responsive sidebar collapse
+- [ ] Slide-out drawer on mobile
+- [ ] Touch-friendly sizing (48dp)
+- [ ] Virtual keyboard handling
 
-### Export & Distribution
-- [ ] Windows .exe export — build standalone executable
-- [ ] Android .apk export — build and install on device
-- [ ] App icon — proper .ico for Windows, adaptive icon for Android
-- [ ] Auto-update — check for new versions on launch
+### Export
+- [ ] Windows .exe build
+- [ ] Android .apk build and test on phone
+- [ ] App icons (.ico + adaptive)
