@@ -71,21 +71,21 @@ Master roadmap: `C:\Users\aaron\Desktop\dev\ghostkv\ROADMAP.md` (v1.1.0 section)
 - [x] **Emoji SMS fix** — `divideMessage()` for all messages to handle UCS-2 encoding
 
 ### New Android Plugin Tools — Medium Value
-- [ ] **Media control** — play/pause/skip via `MediaSessionManager`
-- [ ] **Volume control** — adjust media/ring/alarm volume via `AudioManager`
-- [ ] **Brightness control** — get/set screen brightness via `Settings.System`
-- [ ] **Battery status** — level, charging state, health via `BatteryManager` / sticky `ACTION_BATTERY_CHANGED` intent
-- [ ] **WiFi info** — current network name, IP, signal strength via `WifiManager`
-- [ ] **Screen control** — wake screen, lock, set timeout via `PowerManager` / `DevicePolicyManager`
-- [ ] **Share intent** — send text/content to other apps via `ACTION_SEND`
+- [x] **Media control** — play/pause/skip via `MediaSessionManager`
+- [x] **Volume control** — adjust media/ring/alarm volume via `AudioManager`
+- [x] **Brightness control** — get/set screen brightness via `Settings.System`
+- [x] **Battery status** — level, charging state, health via `BatteryManager` / sticky `ACTION_BATTERY_CHANGED` intent
+- [x] **WiFi info** — current network name, IP, signal strength via `WifiManager`
+- [x] **Screen control** — wake screen, lock, set timeout via `PowerManager` / `DevicePolicyManager`
+- [x] **Share intent** — send text/content to other apps via `ACTION_SEND`
 
 ### New Android Plugin Tools — Nice to Have
-- [ ] **Write file** — save content to Downloads or app-specific storage
-- [ ] **List directory** — browse filesystem, list files and folders
+- [x] **Write file** — save content to Downloads or app-specific storage
+- [x] **List directory** — browse filesystem, list files and folders
 - [ ] **Screenshot** — capture screen via `MediaProjection` API (needs user confirmation)
-- [ ] **Contact management** — add/edit/delete contacts via `ContactsContract` write operations
-- [ ] **Bluetooth** — list paired devices, connect/disconnect via `BluetoothManager`
-- [ ] **NFC** — read NFC tags via `NfcAdapter`
+- [x] **Contact management** — add/edit/delete contacts via `ContactsContract` write operations
+- [x] **Bluetooth** — list paired devices, connect/disconnect via `BluetoothManager`
+- [x] **NFC** — read NFC tags via `NfcAdapter`
 
 ### Voice Agent (VoIP)
 - [ ] **SIP/VoIP integration** — use Android SipManager or Pjsip library to make/receive data calls
@@ -98,16 +98,16 @@ Master roadmap: `C:\Users\aaron\Desktop\dev\ghostkv\ROADMAP.md` (v1.1.0 section)
 - [ ] **Phone number integration** — dial cellular numbers via VoIP gateway (Twilio/similar)
 
 ### Voice & Live Chat
-- [ ] **Voice input button** — mic button in input bar, taps to start STT, transcribes to text field
-- [ ] **Auto-TTS toggle** — setting to automatically speak every assistant response aloud
-- [ ] **Live voice chat mode** — continuous STT → LLM → TTS conversation loop: listen → send → stream response → speak → listen again, hands-free
-- [ ] **Voice activity detection** — detect silence to auto-stop listening and send
-- [ ] **Interrupt TTS** — stop speaking when user starts talking (barge-in)
-- [ ] **Listening indicator** — animated waveform or pulsing mic while STT is active
-- [ ] **STT continuous mode** — keep listening after response completes for back-and-forth chat
-- [ ] **Voice chat UI** — floating mic button overlay, voice mode toggle in toolbar
+- [x] **Voice input button** — mic button in input bar, taps to start STT, transcribes to text field
+- [x] **Auto-TTS toggle** — setting to automatically speak every assistant response aloud
+- [x] **Live voice chat mode** — continuous STT → LLM → TTS conversation loop: listen → send → stream response → speak → listen again, hands-free
+- [x] **Voice activity detection** — detect silence to auto-stop listening and send
+- [x] **Interrupt TTS** — stop speaking when user starts talking (barge-in)
+- [x] **Listening indicator** — animated waveform or pulsing mic while STT is active
+- [x] **STT continuous mode** — keep listening after response completes for back-and-forth chat
+- [x] **Voice chat UI** — floating mic button overlay, voice mode toggle in toolbar
 
 ### Export
-- [ ] Windows .exe build
-- [ ] Android .apk build and test on phone
+- [x] Windows .exe build
+- [x] Android .apk build and test on phone
 - [ ] App icons (.ico + adaptive)

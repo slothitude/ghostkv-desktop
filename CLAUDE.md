@@ -75,14 +75,15 @@ MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:38827 shell am start -n com.slothitude.g
 5. **ReactLoop** (`core/react_loop.gd`) — ReAct loop. Detects `Action: tool_name(args)` in LLM response via regex. If found, dispatches tool, appends observation, loops. If not, emits `answer_ready`.
 6. **Markdown** (`core/markdown.gd`) — Markdown → BBCode converter
 7. **BuiltinTools** (`core/builtin_tools.gd`) — 19 built-in tools. On Android, bridges to `GhostKVPlugin` Java singleton; has `OS.execute()` shell fallbacks when plugin is null. Tools: open_url, run_command, file_read, calculator, send_sms, open_camera, open_app, list_apps, run_python, toast, vibrate, get_contacts, get_location, read_sms, set_alarm, set_timer, speak, start_listening.
+8. **VoiceManager** (`core/voice_manager.gd`) — Voice pipeline orchestrator. Dictation mode (mic tap → STT → fills input), voice chat mode (continuous STT→LLM→TTS loop), auto-TTS, barge-in detection. On Android, bridges to `GhostKVPlugin` SpeechRecognizer + TTS APIs.
 
 ### UI (all built programmatically, no .tscn editor layouts)
-- **App** (`ui/app.gd`) — root `Control`, HBoxContainer with sidebar + chat. Detects mobile breakpoint at 720px.
+- **App** (`ui/app.gd`) — root `Control`, HBoxContainer with sidebar + chat. Detects mobile breakpoint at 720px. Voice mode toggle in status row, floating 64x64 mic overlay when active. `send_voice_message()` for voice input.
 - **Sidebar** (`ui/sidebar.tscn`) — sessions list, MCP panel, settings panel
 - **ChatView** (`ui/chat_view.tscn`) — scrollable message list
 - **MessageBubble** (`ui/message_bubble.tscn`) — user (purple) / assistant (dark) / error styling
 - **ToolCard** (`ui/tool_card.tscn`) — expandable card with accent border for tool calls
-- **InputBar** (`ui/input_bar.tscn`) — text input + send/stop button
+- **InputBar** (`ui/input_bar.tscn`) — text input + mic button (Android) + send/stop button. Mic button pulses while listening. `set_dictated_text()` fills input from STT.
 - **StatusBar** (`ui/status_bar.tscn`) — model name, step counter, token count, elapsed time
 
 ### Remote API
@@ -97,3 +98,7 @@ MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:38827 shell am start -n com.slothitude.g
 - **Singleton access**: Use `Engine.get_singleton("Name")` — returns `Variant`, cast to `Node`. All singletons registered in `main.gd`.
 - **Node tree**: App node is named "App" (from `app.tscn`). Remote API finds it via `_find_node(get_tree().root, "App")`.
 - **Windows paths in GDScript**: `\t` in string paths becomes TAB. Use forward slashes or raw strings.
+- **SpeechRecognizer threading**: Must run on Android main thread. Plugin uses `Handler(Looper.getMainLooper()).post()` — never call `SpeechRecognizer` APIs from Godot's render thread directly.
+- **TTS init race**: First `speakWithId()` call may arrive before TTS engine is ready. Plugin queues pending text and flushes when `_ttsReady` becomes true.
+- **Thinking bubble race**: `queue_free()` on thinking bubble is deferred. `chat_view._on_answer()` must `await get_tree().process_frame` before adding assistant bubble, or the freed thinking bubble steals the update.
+- **AAR rebuild**: The `jar cf` command must use an absolute output path on Windows, and never extract from + write to the same AAR file. Use a staging directory with a template copy.
