@@ -9,6 +9,10 @@ func _ready() -> void:
 	# On Android, the plugin is registered as a singleton by Godot's plugin loader
 	if OS.has_feature("android"):
 		_plugin = Engine.get_singleton("GhostKVPlugin")
+		if _plugin:
+			print("BuiltinTools: plugin loaded OK")
+		else:
+			push_error("BuiltinTools: FAILED to load GhostKVPlugin singleton")
 	_register_tools()
 
 func _register_tools() -> void:
@@ -323,7 +327,7 @@ func _tool_send_sms(args: Dictionary) -> String:
 		OS.execute("am", ["start", "-a", "android.intent.action.SENDTO",
 			"-d", "sms:%s" % phone, "--es", "sms_body", message], output)
 		print("BuiltinTools: am output: %s" % str(output))
-		return "SMS intent launched to %s" % phone
+		return "SMS compose screen opened to %s — user must tap Send manually (plugin not loaded)" % phone
 	return "Error: SMS only available on Android"
 
 func _tool_open_camera() -> String:
