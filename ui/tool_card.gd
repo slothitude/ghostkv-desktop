@@ -8,6 +8,8 @@ var _step: int = 0
 var _tool_name: String = ""
 var _args: String = ""
 var _expand_btn: Button
+var _desc_label: Label
+var _schema_label: RichTextLabel
 
 func _ready() -> void:
 	var vbox := VBoxContainer.new()
@@ -19,7 +21,7 @@ func _ready() -> void:
 	_header.add_theme_constant_override("separation", 8)
 	vbox.add_child(_header)
 
-	# Tool icon indicator (colored dot using a Label)
+	# Tool icon indicator
 	var dot := Label.new()
 	dot.text = ">"
 	dot.add_theme_color_override("font_color", Color("#6c63ff"))
@@ -38,8 +40,8 @@ func _ready() -> void:
 	step_label.text = "Step 0"
 	step_label.add_theme_color_override("font_color", Color("#555570"))
 	step_label.add_theme_font_size_override("font_size", 11)
-	_header.add_child(step_label)
 	step_label.name = "StepLabel"
+	_header.add_child(step_label)
 
 	# Spacer
 	var spacer := Control.new()
@@ -49,7 +51,7 @@ func _ready() -> void:
 	# Expand toggle button
 	_expand_btn = Button.new()
 	_expand_btn.text = "+"
-	_expand_btn.custom_minimum_size = Vector2(28, 28)
+	_expand_btn.custom_minimum_size = Vector2(36, 36)
 	_expand_btn.add_theme_font_size_override("font_size", 14)
 	_expand_btn.pressed.connect(_toggle_expand)
 	_header.add_child(_expand_btn)
@@ -60,6 +62,37 @@ func _ready() -> void:
 	_body.add_theme_constant_override("separation", 4)
 	vbox.add_child(_body)
 
+	# Description (shown if available)
+	_desc_label = Label.new()
+	_desc_label.text = ""
+	_desc_label.add_theme_font_size_override("font_size", 11)
+	_desc_label.add_theme_color_override("font_color", Color("#8888aa"))
+	_desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_desc_label.name = "DescLabel"
+	_desc_label.visible = false
+	_body.add_child(_desc_label)
+
+	# Schema section
+	var schema_header := Label.new()
+	schema_header.text = "Parameters"
+	schema_header.add_theme_font_size_override("font_size", 10)
+	schema_header.add_theme_color_override("font_color", Color("#555570"))
+	schema_header.name = "SchemaHeader"
+	schema_header.visible = false
+	_body.add_child(schema_header)
+
+	_schema_label = RichTextLabel.new()
+	_schema_label.bbcode_enabled = true
+	_schema_label.fit_content = true
+	_schema_label.custom_minimum_size = Vector2(0, 0)
+	_schema_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_schema_label.add_theme_font_size_override("normal_font_size", 11)
+	_schema_label.add_theme_color_override("default_color", Color("#9999bb"))
+	_schema_label.name = "SchemaLabel"
+	_schema_label.visible = false
+	_body.add_child(_schema_label)
+
+	# Arguments section
 	var args_header := Label.new()
 	args_header.text = "Arguments"
 	args_header.add_theme_font_size_override("font_size", 10)
@@ -73,6 +106,7 @@ func _ready() -> void:
 	args_label.name = "ArgsLabel"
 	_body.add_child(args_label)
 
+	# Result section
 	var result_header := Label.new()
 	result_header.text = "Result"
 	result_header.add_theme_font_size_override("font_size", 10)
@@ -89,7 +123,7 @@ func _ready() -> void:
 	_result_label.text = "Waiting..."
 	_body.add_child(_result_label)
 
-	# Styling — accent left border, subtle shadow
+	# Styling
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color("#141428")
 	style.border_color = Color("#6c63ff")
@@ -123,6 +157,48 @@ func setup(step: int, tool_name: String, args: String) -> void:
 	var args_node := _body.get_node("ArgsLabel") as Label
 	if args_node:
 		args_node.text = args
+
+	# Look up tool schema and description from tool_dispatch
+	var tool_dispatch := Engine.get_singleton("ToolDispatch") as Node
+	if tool_dispatch:
+		var desc: String = tool_dispatch.get_tool_description(tool_name)
+		if not desc.is_empty():
+			var desc_node := _body.get_node("DescLabel") as Label
+			if desc_node:
+				desc_node.text = desc
+				desc_node.visible = true
+
+		var schema: Dictionary = tool_dispatch.get_tool_schema(tool_name)
+		if schema.has("properties"):
+			_show_schema(schema)
+
+func _show_schema(schema: Dictionary) -> void:
+	var schema_header := _body.get_node("SchemaHeader") as Label
+	var schema_label := _body.get_node("SchemaLabel") as RichTextLabel
+	if not schema_header or not schema_label:
+		return
+
+	var required: Array = schema.get("required", [])
+	var props: Dictionary = schema.get("properties", {})
+	if props.is_empty():
+		return
+
+	schema_header.visible = true
+	schema_label.visible = true
+
+	var lines: PackedStringArray = []
+	for param_name in props:
+		var prop: Dictionary = props[param_name]
+		var type_str: String = prop.get("type", "any")
+		var desc_str: String = prop.get("description", "")
+		var req := " [color=#ff8899]*[/color]" if required.has(param_name) else ""
+		var line := "[color=#6c63ff]%s[/color]: [color=#56b6c2]%s[/color]%s" % [param_name, type_str, req]
+		if not desc_str.is_empty():
+			line += " — %s" % desc_str
+		lines.append(line)
+
+	schema_label.clear()
+	schema_label.append_text("\n".join(lines))
 
 func set_result(result: String) -> void:
 	if _result_label:

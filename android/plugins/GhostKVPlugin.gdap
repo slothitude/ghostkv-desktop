@@ -1,0 +1,7 @@
+[config]
+
+name="GhostKVPlugin"
+binary_type="local"
+binary="GhostKVPlugin.aar"
+
+[dependencies]

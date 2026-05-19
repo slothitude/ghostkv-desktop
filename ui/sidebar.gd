@@ -6,6 +6,7 @@ var _mcp_panel: Control
 var _settings_panel: Control
 var _state: Node
 var _session_mgr: Node
+var _delete_btn: Button
 
 func _ready() -> void:
 	_state = Engine.get_singleton("AppState")
@@ -70,11 +71,22 @@ func _ready() -> void:
 
 	var new_btn := Button.new()
 	new_btn.text = "+"
-	new_btn.custom_minimum_size = Vector2(26, 26)
-	new_btn.add_theme_font_size_override("font_size", 14)
+	new_btn.custom_minimum_size = Vector2(36, 36)
+	new_btn.add_theme_font_size_override("font_size", 16)
 	new_btn.tooltip_text = "New session"
 	new_btn.pressed.connect(_on_new_session)
 	session_header.add_child(new_btn)
+
+	# Delete session button
+	_delete_btn = Button.new()
+	_delete_btn.text = "x"
+	_delete_btn.custom_minimum_size = Vector2(36, 36)
+	_delete_btn.add_theme_font_size_override("font_size", 14)
+	_delete_btn.tooltip_text = "Delete selected session"
+	_delete_btn.add_theme_color_override("font_color", Color("#ff5566"))
+	_delete_btn.add_theme_color_override("font_hover_color", Color("#ff7788"))
+	_delete_btn.pressed.connect(_on_delete_session)
+	session_header.add_child(_delete_btn)
 
 	_session_list = ItemList.new()
 	_session_list.custom_minimum_size.y = 110
@@ -173,11 +185,23 @@ func _on_session_selected(index: int, _at: Vector2, _mb: int) -> void:
 	var name := _session_list.get_item_text(index)
 	_state.current_session = name
 	_state.session_changed.emit(name)
+	_delete_btn.disabled = false
 
 func _on_new_session() -> void:
 	var name := "session-%d" % Time.get_ticks_msec()
 	_state.current_session = name
 	_state.session_changed.emit(name)
+	_refresh_sessions()
+
+func _on_delete_session() -> void:
+	var selected := _session_list.get_selected_items()
+	if selected.size() == 0:
+		return
+	var name := _session_list.get_item_text(selected[0])
+	if name == _state.current_session:
+		# Can't delete active session — switch to a new one first
+		_on_new_session()
+	_session_mgr.delete_session(name)
 	_refresh_sessions()
 
 func _refresh_tools() -> void:

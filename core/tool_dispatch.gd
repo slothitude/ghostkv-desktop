@@ -31,21 +31,34 @@ func dispatch(tool_name: String, args_str: String) -> String:
 	if _tool_map.has(tool_name):
 		var entry: Dictionary = _tool_map[tool_name]
 		var client: Node = entry["client"]
+		var server: String = entry["server"]
+
+		# Built-in tools (server == "builtin")
+		if server == "builtin" and client and client.has_method("call_tool"):
+			var args_dict := _args_to_dict(args)
+			var result: String = await client.call_tool(tool_name, args_dict)
+			tool_executed.emit(tool_name, result)
+			return result
+
+		# MCP tools
 		if client and client.has_method("call_tool"):
-			var args_dict := {}
-			if args.size() > 0:
-				# Single string arg -> "input" key
-				if args.size() == 1:
-					args_dict = {"input": args[0]}
-				else:
-					for i in args.size():
-						args_dict["arg%d" % i] = args[i]
+			var args_dict := _args_to_dict(args)
 			var result: String = await client.call_tool(tool_name, args_dict)
 			tool_executed.emit(tool_name, result)
 			return result
 		return "Error: MCP client for '%s' not available" % tool_name
 
 	return "Error: Unknown tool '%s'. Available tools: %s" % [tool_name, ", ".join(_tool_map.keys())]
+
+func _args_to_dict(args: PackedStringArray) -> Dictionary:
+	var args_dict := {}
+	if args.size() > 0:
+		if args.size() == 1:
+			args_dict = {"input": args[0]}
+		else:
+			for i in args.size():
+				args_dict["arg%d" % i] = args[i]
+	return args_dict
 
 func _parse_args(args_str: String) -> PackedStringArray:
 	var result := PackedStringArray()
@@ -70,3 +83,19 @@ func build_tool_descriptions() -> String:
 			desc = "No description available"
 		lines.append("- %s: %s" % [tool_name, desc])
 	return "\n".join(lines)
+
+func get_tool_schema(tool_name: String) -> Dictionary:
+	if _tool_map.has(tool_name):
+		var entry: Dictionary = _tool_map[tool_name]
+		var client: Node = entry["client"]
+		if client and client.has_method("get_tool_schema"):
+			return client.get_tool_schema(tool_name)
+	return {}
+
+func get_tool_description(tool_name: String) -> String:
+	if _tool_map.has(tool_name):
+		var entry: Dictionary = _tool_map[tool_name]
+		var client: Node = entry["client"]
+		if client and client.has_method("get_tool_description"):
+			return client.get_tool_description(tool_name)
+	return ""

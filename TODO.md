@@ -27,35 +27,37 @@ Master roadmap: `C:\Users\aaron\Desktop\dev\ghostkv\ROADMAP.md` (v1.1.0 section)
 - [x] Fix: invisible text (setup() after add_child())
 - [x] Fix: Godot 4.6 parse errors (type inference, enum names)
 - [x] Windows + Android export presets
+- [x] Streaming output — HTTPClient-based SSE, tokens appear live, BBCode finalize on complete
+- [x] Loading spinner — animated "thinking..." dots while awaiting first token
+- [x] Stop button — replaces Send during generation, cancels stream + react loop
+- [x] Retry button — error bubbles get Retry button that re-sends last user message
+- [x] Copy message — Copy button on assistant + error bubbles, clipboard via DisplayServer
+- [x] Keyboard shortcuts — Escape stop, Ctrl+N new session, Ctrl+S save, Ctrl+L focus input
+- [x] Window persistence — save/restore position and size across restarts
+- [x] Streaming placeholder — "GhostKV is responding..." during streaming vs "thinking..."
+- [x] Code block rendering — syntax highlighting for 8+ languages, language label headers, dark bg, inline code styling
+- [x] Clear chat — Clear button in status bar, clears messages + saves session
+- [x] Delete session — X button in sidebar, removes from list and disk
+- [x] Sound effects — tap.ogg on send, click.ogg on receive, switch.ogg on error
+- [x] Live status bar — elapsed time counter during generation, step updates
+- [x] MCP auto-reconnect — retry with backoff (2s/4s/6s, 3 attempts), live status in sidebar
+- [x] Tool schema display — parameter names, types, required markers, descriptions in tool cards
+- [x] Structured error display — error type detection, timestamps, actionable hints per error class
+- [x] Responsive sidebar — hamburger menu on narrow screens, dark overlay, auto-collapse on mobile
+- [x] Touch-friendly sizing — 48dp buttons, 36dp sidebar buttons, larger action targets
+- [x] Android debug keystore — generated, export preset configured
+- [x] Responsive resize detection — NOTIFICATION_RESIZED, auto-switches layout at 720px breakpoint
+- [x] Android plugin — GhostKVPlugin.java (shell exec, SMS, camera, apps, toast, vibrate, permissions)
+- [x] Built-in tools — core/builtin_tools.gd (run_command, file_read, calculator, open_url, run_python, send_sms, open_camera, open_app, list_apps, toast, vibrate)
+- [x] Tool dispatch — handles builtin + MCP tools, schema + descriptions for all
+- [x] Android permissions — SEND_SMS, CAMERA, VIBRATE in export_presets.cfg
 
 ## Next Up
 
-### Polish
-- [ ] Loading spinner — animated indicator while awaiting API response
-- [ ] Error display — API errors shown clearly in chat
-- [ ] Keyboard shortcuts — Ctrl+N new session, Ctrl+S save, Escape stop
-- [ ] Window persistence — remember size/position across restarts
-- [ ] Sound effects — play Kenney click/tap on send/receive
-- [ ] Copy message — right-click or button to copy text
-- [ ] Clear chat — button to clear current session messages
-- [ ] Delete session — remove from list and disk
-
-### UX
-- [ ] Streaming output — show tokens as they arrive
-- [ ] Code block rendering — monospace blocks with syntax hints
-- [ ] Stop button — cancel ongoing API request
-- [ ] Retry button — retry failed messages
-
-### MCP & Tools
-- [ ] MCP auto-reconnect on startup
-- [ ] Tool argument schema display
-- [ ] Built-in tools — web search, file read, calculator
-
-### Mobile
-- [ ] Responsive sidebar collapse
-- [ ] Slide-out drawer on mobile
-- [ ] Touch-friendly sizing (48dp)
-- [ ] Virtual keyboard handling
+### Android Plugin Build
+- [ ] Compile GhostKVPlugin.java → .aar
+- [ ] Configure plugin in project.godot (android_plugin)
+- [ ] Test on Android device
 
 ### Export
 - [ ] Windows .exe build

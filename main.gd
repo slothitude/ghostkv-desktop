@@ -7,16 +7,23 @@ var _api_client: Node
 var _tool_dispatch: Node
 var _react_loop: Node
 var _markdown: Node
+var _builtin_tools: Node
+var _remote_api: Node
 
 func _ready() -> void:
 	# Setup window
 	get_window().title = "GhostKV Desktop"
-	get_window().size = Vector2(1200, 800)
 	get_window().min_size = Vector2(800, 600)
-	get_window().position = Vector2(
+
+	# Restore window rect from settings (saved in settings.json)
+	var saved_size := Vector2(1200, 800)
+	var saved_pos := Vector2(
 		(DisplayServer.screen_get_size().x - 1200) / 2,
 		(DisplayServer.screen_get_size().y - 800) / 2
 	)
+	# We'll load settings below and apply; for now set defaults
+	get_window().size = saved_size
+	get_window().position = saved_pos
 
 	# Build theme
 	_theme_node = Node.new()
@@ -68,6 +75,13 @@ func _ready() -> void:
 	add_child(_markdown)
 	Engine.register_singleton("Markdown", _markdown)
 
+	# Built-in tools (bridges to Android plugin or OS APIs)
+	_builtin_tools = Node.new()
+	_builtin_tools.set_script(load("res://core/builtin_tools.gd"))
+	_builtin_tools.name = "BuiltinTools"
+	add_child(_builtin_tools)
+	Engine.register_singleton("BuiltinTools", _builtin_tools)
+
 	# Load settings and configure API client
 	var settings: Dictionary = _session.load_settings()
 	if settings.has("api_base_url"):
@@ -76,6 +90,15 @@ func _ready() -> void:
 			settings.get("api_key", ""),
 			settings.get("model", "glm-5.1")
 		)
+
+	# Restore window position from settings
+	if settings.has("window_rect"):
+		var rect: Dictionary = settings["window_rect"]
+		get_window().position = Vector2(rect.get("x", saved_pos.x), rect.get("y", saved_pos.y))
+		get_window().size = Vector2(rect.get("w", saved_size.x), rect.get("h", saved_size.y))
+
+	# Save window rect on close
+	get_window().close_requested.connect(_on_close)
 
 	# Configure react loop
 	_react_loop.configure(
@@ -90,3 +113,21 @@ func _ready() -> void:
 	# Load main UI
 	var app: Node = load("res://ui/app.tscn").instantiate()
 	add_child(app)
+
+	# Remote API (HTTP on port 9797)
+	_remote_api = Node.new()
+	_remote_api.set_script(load("res://core/remote_api.gd"))
+	_remote_api.name = "RemoteAPI"
+	add_child(_remote_api)
+
+func _on_close() -> void:
+	# Save window rect to settings
+	var settings: Dictionary = _session.load_settings()
+	settings["window_rect"] = {
+		"x": get_window().position.x,
+		"y": get_window().position.y,
+		"w": get_window().size.x,
+		"h": get_window().size.y
+	}
+	_session.save_settings(settings)
+	get_tree().quit()

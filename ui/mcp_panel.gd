@@ -61,7 +61,14 @@ func _on_connect() -> void:
 	if server_name.is_empty() or url.is_empty():
 		return
 
-	# Create MCP client node
+	_connect_server(server_name, url)
+	_save_mcp_servers()
+
+func _connect_server(server_name: String, url: String) -> void:
+	# Don't duplicate
+	if _mcp_clients.has(server_name):
+		return
+
 	var client := Node.new()
 	client.set_script(load("res://core/mcp_client.gd"))
 	client.name = "MCP_%s" % server_name
@@ -69,15 +76,13 @@ func _on_connect() -> void:
 
 	client.tools_discovered.connect(_on_tools_discovered.bind(server_name))
 	client.connection_failed.connect(_on_connection_failed.bind(server_name))
+	client.connection_status_changed.connect(_on_status_changed.bind(server_name))
 
 	client.connect_server(server_name, url)
 	_mcp_clients[server_name] = client
 	_tool_dispatch.register_mcp_client(server_name, client)
 
 	_server_list.add_item("%s (connecting...)" % server_name)
-
-	# Save to settings
-	_save_mcp_servers()
 
 func _on_disconnect() -> void:
 	var selected := _server_list.get_selected_items()
@@ -99,23 +104,31 @@ func _on_disconnect() -> void:
 	_save_mcp_servers()
 
 func _on_tools_discovered(tools: Array, server_name: String) -> void:
-	# Update list item
 	for i in _server_list.item_count:
 		if _server_list.get_item_text(i).begins_with(server_name):
 			_server_list.set_item_text(i, "%s (%d tools)" % [server_name, tools.size()])
 			break
 
-	# Register each tool
 	var client: Node = _mcp_clients.get(server_name)
 	for tool in tools:
 		var tool_name: String = tool.get("name", "")
 		if not tool_name.is_empty():
 			_tool_dispatch.register_tool(tool_name, server_name, client)
 
-func _on_connection_failed(msg: String, server_name: String) -> void:
+func _on_connection_failed(_msg: String, _server_name: String) -> void:
+	pass  # Status handled by _on_status_changed
+
+func _on_status_changed(status: String, server_name: String) -> void:
 	for i in _server_list.item_count:
 		if _server_list.get_item_text(i).begins_with(server_name):
-			_server_list.set_item_text(i, "%s (FAILED)" % server_name)
+			match status:
+				"connected":
+					# Will be overwritten by _on_tools_discovered
+					_server_list.set_item_text(i, "%s (connected)" % server_name)
+				"failed":
+					_server_list.set_item_text(i, "%s (FAILED)" % server_name)
+				_:
+					_server_list.set_item_text(i, "%s (%s)" % [server_name, status])
 			break
 
 func _on_settings_loaded(settings: Dictionary) -> void:
@@ -124,12 +137,7 @@ func _on_settings_loaded(settings: Dictionary) -> void:
 		var s_name: String = server.get("name", "")
 		var s_url: String = server.get("url", "")
 		if not s_name.is_empty() and not s_url.is_empty():
-			# Auto-connect
-			_name_input.text = s_name
-			_url_input.text = s_url
-			_on_connect()
-			_name_input.text = ""
-			_url_input.text = ""
+			_connect_server(s_name, s_url)
 
 func _save_mcp_servers() -> void:
 	var settings: Dictionary = _session_mgr.load_settings()

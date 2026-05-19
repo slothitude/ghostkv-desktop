@@ -1,0 +1,15 @@
+# Godot
+.godot/
+*.uid
+*.import
+
+# Export output
+export/
+
+# Android build artifacts
+android/build/.gradle/
+android/build/build/
+android/build/.gdignore
+
+# Backups
+*.bak

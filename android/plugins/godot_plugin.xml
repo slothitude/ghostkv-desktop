@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<godot-extension-plugin>
+    <name>GhostKVPlugin</name>
+    <binary>GhostKVPlugin.aar</binary>
+    <description>GhostKV Android Plugin — shell execution, SMS, camera, apps, Python bridge</description>
+</godot-extension-plugin>
