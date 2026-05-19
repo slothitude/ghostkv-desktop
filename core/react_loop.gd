@@ -47,18 +47,19 @@ func run(question: String, history: Array = []) -> void:
 	_messages = history.duplicate(true)
 	_messages.append({"role": "user", "content": question})
 
-	# Add system prompt if not already present
-	var has_system := false
-	for msg in _messages:
-		if msg.get("role", "") == "system":
-			has_system = true
-			break
-	if not has_system and _system_prompt != "":
-		var full_prompt := _system_prompt
-		if _tool_dispatch and _tool_dispatch.has_method("build_tool_descriptions"):
-			var tool_desc: String = _tool_dispatch.build_tool_descriptions()
-			if not tool_desc.is_empty():
-				full_prompt += "\n\nAvailable tools:\n" + tool_desc
+	# Build system prompt with tool descriptions
+	var full_prompt := _system_prompt
+	if _tool_dispatch and _tool_dispatch.has_method("build_tool_descriptions"):
+		var tool_desc: String = _tool_dispatch.build_tool_descriptions()
+		if not tool_desc.is_empty():
+			full_prompt += "\n\nAvailable tools:\n" + tool_desc
+			print("ReactLoop: injected %d tool descriptions into system prompt" % tool_desc.split("\n").size())
+
+	# Remove any existing system message and insert fresh one
+	for i in range(_messages.size() - 1, -1, -1):
+		if _messages[i].get("role", "") == "system":
+			_messages.remove_at(i)
+	if full_prompt != "":
 		_messages.insert(0, {"role": "system", "content": full_prompt})
 
 	_do_step()

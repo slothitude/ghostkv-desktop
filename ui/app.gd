@@ -118,6 +118,15 @@ func _ready() -> void:
 	_react_loop.answer_ready.connect(_on_answer_ready)
 	_react_loop.loop_error.connect(_on_loop_error)
 
+	# Confirmation dialog for SMS/calls (overlay on top of everything)
+	var confirm_dialog := PanelContainer.new()
+	confirm_dialog.set_script(load("res://ui/confirm_dialog.gd"))
+	confirm_dialog.z_index = 100
+	add_child(confirm_dialog)
+	var builtin_tools := Engine.get_singleton("BuiltinTools") as Node
+	if builtin_tools and builtin_tools.has_method("set_confirm_dialog"):
+		builtin_tools.set_confirm_dialog(confirm_dialog)
+
 	# Load current session
 	_load_session(_state.current_session)
 

@@ -4,6 +4,8 @@ extends Node
 ## Registered with ToolDispatch so the ReAct loop can call them via Action: syntax.
 
 var _plugin: RefCounted = null  # GhostKVPlugin singleton on Android
+var _confirm_dialog: Node = null  # Confirmation dialog overlay
+var _trusted_contacts: Dictionary = {}  # phone -> {"name": "...", "trust": "full"|"temp"}
 
 func _ready() -> void:
 	# On Android, the plugin is registered as a singleton by Godot's plugin loader
@@ -14,6 +16,67 @@ func _ready() -> void:
 		else:
 			push_error("BuiltinTools: FAILED to load GhostKVPlugin singleton")
 	_register_tools()
+	_load_trusted_contacts()
+
+func set_confirm_dialog(dialog: Node) -> void:
+	_confirm_dialog = dialog
+
+func _load_trusted_contacts() -> void:
+	var session := Engine.get_singleton("SessionManager") as Node
+	if not session:
+		return
+	var settings: Dictionary = session.load_settings()
+	var contacts: Dictionary = settings.get("trusted_contacts", {})
+	_trusted_contacts = contacts
+
+func _save_trusted_contacts() -> void:
+	var session := Engine.get_singleton("SessionManager") as Node
+	if not session:
+		return
+	var settings: Dictionary = session.load_settings()
+	settings["trusted_contacts"] = _trusted_contacts
+	session.save_settings(settings)
+
+func add_trusted_contact(phone: String, name: String, trust: String) -> void:
+	# Normalize phone: strip spaces/dashes
+	var clean := phone.replace(" ", "").replace("-", "")
+	_trusted_contacts[clean] = {"name": name, "trust": trust}
+	_save_trusted_contacts()
+
+func get_trust_level(phone: String) -> Dictionary:
+	var clean := phone.replace(" ", "").replace("-", "")
+	if _trusted_contacts.has(clean):
+		return _trusted_contacts[clean]
+	return {"name": "", "trust": "unknown"}
+
+func _lookup_contact_name(phone: String) -> String:
+	var trust := get_trust_level(phone)
+	if trust.get("name", "") != "":
+		return trust["name"]
+	# Try to find via contacts tool
+	if _plugin and _plugin.has_method("getContacts"):
+		var result: String = _plugin.getContacts(phone)
+		if result != "[]" and result != "":
+			var json := JSON.new()
+			if json.parse(result) == OK and json.data is Array and json.data.size() > 0:
+				var first: Dictionary = json.data[0]
+				return first.get("name", "")
+	return ""
+
+## Check if a phone number is trusted (full trust = auto-send, temp/unknown = confirm)
+func _is_full_trusted(phone: String) -> bool:
+	var trust := get_trust_level(phone)
+	return trust.get("trust", "") == "full"
+
+## Show confirmation dialog and await user response. Returns true if confirmed.
+func _await_confirmation(action: String, phone: String, message: String = "") -> bool:
+	if not _confirm_dialog:
+		# No dialog available — block the action for safety
+		return false
+	var contact_name: String = _lookup_contact_name(phone)
+	_confirm_dialog.show_confirm(action, phone, contact_name, message)
+	var result: bool = await _confirm_dialog.confirmed
+	return result
 
 func _register_tools() -> void:
 	var td := Engine.get_singleton("ToolDispatch") as Node
@@ -49,6 +112,8 @@ func _register_tools() -> void:
 	td.register_tool("write_clipboard", "builtin", self)
 	td.register_tool("toggle_flashlight", "builtin", self)
 	td.register_tool("get_notifications", "builtin", self)
+	td.register_tool("add_trusted_contact", "builtin", self)
+	td.register_tool("list_trusted_contacts", "builtin", self)
 
 # ── Tool descriptions (used by ToolDispatch.build_tool_descriptions) ───────
 
@@ -63,7 +128,7 @@ func get_tool_description(tool_name: String) -> String:
 		"calculator":
 			return "Evaluate a math expression. Args: \"expression\""
 		"send_sms":
-			return "Send an SMS message (Android only). Args: \"phone\", \"message\""
+			return "Send an SMS message (Android only). Requires confirmation unless contact has full trust. Args: \"phone\", \"message\""
 		"open_camera":
 			return "Open the device camera (Android only). Args: none"
 		"open_app":
@@ -91,7 +156,7 @@ func get_tool_description(tool_name: String) -> String:
 		"start_listening":
 			return "Start speech recognition (voice input). Args: none"
 		"make_call":
-			return "Make a phone call (Android only). Args: \"phone\""
+			return "Make a phone call (Android only). Requires confirmation unless contact has full trust. Args: \"phone\""
 		"get_call_log":
 			return "Read recent call history. Returns JSON array of {number, name, date, duration, type}. Args: \"limit\" (default 20)"
 		"get_calendar_events":
@@ -106,6 +171,10 @@ func get_tool_description(tool_name: String) -> String:
 			return "Toggle flashlight on/off. Args: \"on\" (\"true\" or \"false\")"
 		"get_notifications":
 			return "Read active notifications. Returns JSON array of {app, title, text}. Requires notification access permission."
+		"add_trusted_contact":
+			return "Add a contact to the trusted list so SMS/calls to them skip confirmation. Args: \"phone\", \"name\", \"trust\" (\"full\" or \"temp\")"
+		"list_trusted_contacts":
+			return "List all trusted contacts and their trust levels (full=temp=needs confirm, full=auto-send)"
 		_:
 			return ""
 
@@ -163,6 +232,10 @@ func get_tool_schema(tool_name: String) -> Dictionary:
 			return {"type": "object", "properties": {"on": {"type": "string"}}, "required": ["on"]}
 		"get_notifications":
 			return {"type": "object", "properties": {}}
+		"add_trusted_contact":
+			return {"type": "object", "properties": {"phone": {"type": "string"}, "name": {"type": "string"}, "trust": {"type": "string"}}, "required": ["phone", "name", "trust"]}
+		"list_trusted_contacts":
+			return {"type": "object", "properties": {}}
 		_:
 			return {}
 
@@ -179,7 +252,7 @@ func call_tool(tool_name: String, args: Dictionary) -> String:
 		"calculator":
 			return _tool_calculator(args)
 		"send_sms":
-			return _tool_send_sms(args)
+			return await _tool_send_sms(args)
 		"open_camera":
 			return _tool_open_camera()
 		"open_app":
@@ -207,7 +280,7 @@ func call_tool(tool_name: String, args: Dictionary) -> String:
 		"start_listening":
 			return _tool_start_listening()
 		"make_call":
-			return _tool_make_call(args)
+			return await _tool_make_call(args)
 		"get_call_log":
 			return _tool_get_call_log(args)
 		"get_calendar_events":
@@ -222,6 +295,10 @@ func call_tool(tool_name: String, args: Dictionary) -> String:
 			return _tool_toggle_flashlight(args)
 		"get_notifications":
 			return _tool_get_notifications()
+		"add_trusted_contact":
+			return _tool_add_trusted_contact(args)
+		"list_trusted_contacts":
+			return _tool_list_trusted_contacts()
 		_:
 			return "Error: Unknown built-in tool '%s'" % tool_name
 
@@ -317,6 +394,11 @@ func _tool_send_sms(args: Dictionary) -> String:
 	var message: String = args.get("message", args.get("arg1", ""))
 	if phone.is_empty() or message.is_empty():
 		return "Error: Both phone and message are required. Got: phone='%s' message='%s' args=%s" % [phone, message, str(args)]
+	# Check trust level — require confirmation for non-full-trust contacts
+	if not _is_full_trusted(phone):
+		var confirmed: bool = await _await_confirmation("Send SMS", phone, message)
+		if not confirmed:
+			return "SMS cancelled by user"
 	if _plugin:
 		_plugin.sendSMS(phone, message)
 		return "SMS sent to %s" % phone
@@ -489,6 +571,11 @@ func _tool_make_call(args: Dictionary) -> String:
 	var phone: String = args.get("input", args.get("phone", args.get("arg0", "")))
 	if phone.is_empty():
 		return "Error: no phone number provided"
+	# Check trust level — require confirmation for non-full-trust contacts
+	if not _is_full_trusted(phone):
+		var confirmed: bool = await _await_confirmation("Call", phone)
+		if not confirmed:
+			return "Call cancelled by user"
 	if _plugin:
 		_plugin.makeCall(phone)
 		return "Calling %s" % phone
@@ -550,3 +637,23 @@ func _tool_get_notifications() -> String:
 	if _plugin:
 		return _plugin.getNotifications()
 	return "Error: notifications only available on Android with plugin"
+
+func _tool_add_trusted_contact(args: Dictionary) -> String:
+	var phone: String = args.get("phone", args.get("arg0", ""))
+	var name: String = args.get("name", args.get("arg1", ""))
+	var trust: String = args.get("trust", args.get("arg2", "temp"))
+	if phone.is_empty() or name.is_empty():
+		return "Error: phone and name are required. Args: \"phone\", \"name\", \"trust\" (full or temp)"
+	if trust != "full" and trust != "temp":
+		trust = "temp"
+	add_trusted_contact(phone, name, trust)
+	return "Added %s (%s) as %s trust contact" % [name, phone, trust]
+
+func _tool_list_trusted_contacts() -> String:
+	if _trusted_contacts.is_empty():
+		return "No trusted contacts configured. Use add_trusted_contact to add contacts."
+	var lines: PackedStringArray = []
+	for phone in _trusted_contacts:
+		var entry: Dictionary = _trusted_contacts[phone]
+		lines.append("- %s (%s): %s" % [entry.get("name", "?"), phone, entry.get("trust", "temp")])
+	return "Trusted contacts:\n" + "\n".join(lines)

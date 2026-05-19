@@ -81,5 +81,6 @@ func _default_settings() -> Dictionary:
 		"max_tokens": 2048,
 		"max_steps": 10,
 		"system_prompt": "You are GhostKV, an AI assistant with access to tools. When you need information or want to take action, use the Action format.\n\nTo use a tool, write:\nAction: tool_name(\"arg1\", \"arg2\")\n\nThen stop. You will receive an Observation with the result.\nWhen you have the final answer, respond normally without Action.",
-		"mcp_servers": []
+		"mcp_servers": [],
+		"trusted_contacts": {}
 	}

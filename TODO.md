@@ -60,12 +60,15 @@ Master roadmap: `C:\Users\aaron\Desktop\dev\ghostkv\ROADMAP.md` (v1.1.0 section)
 ## Next Up
 
 ### New Android Plugin Tools — High Value
-- [ ] **Make phone call** — `Intent.ACTION_CALL` with `CALL_PHONE` permission
-- [ ] **Call log** — read recent calls (who, when, duration) via `CallLog.Calls`
-- [ ] **Calendar** — read upcoming events, create new ones via `CalendarContract`
-- [ ] **Notifications** — read/manage notifications via `NotificationListenerService` (separate permission)
-- [ ] **Clipboard** — read/write clipboard content via `ClipboardManager`
-- [ ] **Flashlight** — toggle camera flash via `CameraManager.setTorchMode()`
+- [x] **Make phone call** — `Intent.ACTION_CALL` with `CALL_PHONE` permission
+- [x] **Call log** — read recent calls (who, when, duration) via `CallLog.Calls`
+- [x] **Calendar** — read upcoming events, create new ones via `CalendarContract`
+- [x] **Notifications** — read/manage notifications via `NotificationListenerService` (separate permission)
+- [x] **Clipboard** — read/write clipboard content via `ClipboardManager`
+- [x] **Flashlight** — toggle camera flash via `CameraManager.setTorchMode()`
+- [x] **SMS confirmation dialog** — trust levels (full/temp), confirm before SMS/call to non-trusted contacts
+- [x] **Tool description injection fix** — always rebuild system prompt with fresh tool descriptions
+- [x] **Emoji SMS fix** — `divideMessage()` for all messages to handle UCS-2 encoding
 
 ### New Android Plugin Tools — Medium Value
 - [ ] **Media control** — play/pause/skip via `MediaSessionManager`
@@ -83,6 +86,16 @@ Master roadmap: `C:\Users\aaron\Desktop\dev\ghostkv\ROADMAP.md` (v1.1.0 section)
 - [ ] **Contact management** — add/edit/delete contacts via `ContactsContract` write operations
 - [ ] **Bluetooth** — list paired devices, connect/disconnect via `BluetoothManager`
 - [ ] **NFC** — read NFC tags via `NfcAdapter`
+
+### Voice Agent (VoIP)
+- [ ] **SIP/VoIP integration** — use Android SipManager or Pjsip library to make/receive data calls
+- [ ] **Audio pipeline** — mic → STT → LLM → TTS → speaker, GhostKV controls entire audio stream
+- [ ] **Real-time STT** — streaming speech-to-text during call (Android SpeechRecognizer or Whisper API)
+- [ ] **Real-time TTS** — stream LLM response to speech, play into call audio
+- [ ] **Voice activity detection** — detect silence to know when caller stops talking
+- [ ] **Barge-in** — stop TTS when caller starts speaking
+- [ ] **Call management UI** — dial pad, incoming call screen, call controls
+- [ ] **Phone number integration** — dial cellular numbers via VoIP gateway (Twilio/similar)
 
 ### Voice & Live Chat
 - [ ] **Voice input button** — mic button in input bar, taps to start STT, transcribes to text field
