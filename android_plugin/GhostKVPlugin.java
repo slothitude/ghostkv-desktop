@@ -4,22 +4,29 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlarmManager;
 import android.app.PendingIntent;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothManager;
+import android.bluetooth.BluetoothDevice;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.ContentProviderOperation;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.os.Environment;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.media.AudioManager;
+import android.net.Uri;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
+import android.nfc.NfcAdapter;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -51,6 +58,7 @@ import org.godotengine.godot.plugin.UsedByGodot;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
@@ -1064,6 +1072,135 @@ public class GhostKVPlugin extends GodotPlugin {
         intent.putExtra(Intent.EXTRA_TEXT, text);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         activity.startActivity(Intent.createChooser(intent, "Share via"));
+    }
+
+    // ── File write ────────────────────────────────────────────────
+
+    @UsedByGodot
+    public String writeFile(String filename, String content) {
+        Activity activity = getActivity();
+        if (activity == null) return "Error: no activity";
+        try {
+            // Save to Downloads directory
+            java.io.File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            java.io.File file = new java.io.File(dir, filename);
+            java.io.FileWriter writer = new java.io.FileWriter(file);
+            writer.write(content);
+            writer.close();
+            // Make visible via MediaStore
+            Intent scanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+            scanIntent.setData(Uri.fromFile(file));
+            activity.sendBroadcast(scanIntent);
+            return "Saved to Downloads/" + filename;
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    // ── List directory ────────────────────────────────────────────
+
+    @UsedByGodot
+    public String listDirectory(String path) {
+        try {
+            java.io.File dir;
+            if (path.isEmpty() || path.equals("/")) {
+                dir = Environment.getExternalStorageDirectory();
+            } else if (path.equals("downloads")) {
+                dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            } else if (path.equals("dcim") || path.equals("photos")) {
+                dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM);
+            } else if (path.equals("documents")) {
+                dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS);
+            } else {
+                dir = new java.io.File(path);
+            }
+            if (!dir.exists() || !dir.isDirectory()) {
+                return "Error: directory not found: " + path;
+            }
+            java.io.File[] files = dir.listFiles();
+            if (files == null) return "Error: cannot read directory";
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < files.length && i < 100; i++) {
+                if (i > 0) sb.append(",");
+                java.io.File f = files[i];
+                sb.append("{\"name\":\"").append(f.getName().replace("\"", "'"))
+                  .append("\",\"is_dir\":").append(f.isDirectory())
+                  .append(",\"size\":").append(f.length());
+                long modified = f.lastModified();
+                sb.append(",\"modified\":").append(modified).append("}");
+            }
+            sb.append("]");
+            return sb.toString();
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    // ── Contact management ────────────────────────────────────────
+
+    @UsedByGodot
+    public String addContact(String name, String phone) {
+        Activity activity = getActivity();
+        if (activity == null) return "Error: no activity";
+        try {
+            ArrayList<ContentProviderOperation> ops = new ArrayList<>();
+            ops.add(ContentProviderOperation.newInsert(ContactsContract.RawContacts.CONTENT_URI)
+                .withValue(ContactsContract.RawContacts.ACCOUNT_TYPE, (String) null)
+                .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, (String) null)
+                .build());
+            ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
+                .build());
+            ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
+                .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, phone)
+                .withValue(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
+                .build());
+            activity.getContentResolver().applyBatch(ContactsContract.AUTHORITY, ops);
+            return "Contact added: " + name + " (" + phone + ")";
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    // ── Bluetooth ─────────────────────────────────────────────────
+
+    @UsedByGodot
+    public String getBluetoothDevices() {
+        Activity activity = getActivity();
+        if (activity == null) return "[]";
+        BluetoothManager bm = (BluetoothManager) activity.getSystemService(Context.BLUETOOTH_SERVICE);
+        if (bm == null) return "[]";
+        BluetoothAdapter adapter = bm.getAdapter();
+        if (adapter == null || !adapter.isEnabled()) return "{\"enabled\":false}";
+
+        Set<BluetoothDevice> paired = adapter.getBondedDevices();
+        StringBuilder sb = new StringBuilder("{\"enabled\":true,\"devices\":[");
+        int i = 0;
+        for (BluetoothDevice device : paired) {
+            if (i > 0) sb.append(",");
+            sb.append("{\"name\":\"").append(device.getName().replace("\"", "'"))
+              .append("\",\"address\":\"").append(device.getAddress())
+              .append("\",\"type\":").append(device.getType())
+              .append("}");
+            i++;
+        }
+        sb.append("],\"count\":").append(i).append("}");
+        return sb.toString();
+    }
+
+    // ── NFC ───────────────────────────────────────────────────────
+
+    @UsedByGodot
+    public String getNfcStatus() {
+        Activity activity = getActivity();
+        if (activity == null) return "{}";
+        NfcAdapter nfc = NfcAdapter.getDefaultAdapter(activity);
+        if (nfc == null) return "{\"available\":false}";
+        return "{\"available\":true,\"enabled\":" + nfc.isEnabled() + "}";
     }
 
     // ── Permission handling ──────────────────────────────────────────

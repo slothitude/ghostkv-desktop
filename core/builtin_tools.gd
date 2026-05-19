@@ -125,6 +125,11 @@ func _register_tools() -> void:
 	td.register_tool("set_screen_timeout", "builtin", self)
 	td.register_tool("get_screen_timeout", "builtin", self)
 	td.register_tool("share_text", "builtin", self)
+	td.register_tool("write_file", "builtin", self)
+	td.register_tool("list_directory", "builtin", self)
+	td.register_tool("add_contact", "builtin", self)
+	td.register_tool("get_bluetooth_devices", "builtin", self)
+	td.register_tool("get_nfc_status", "builtin", self)
 
 # ── Tool descriptions (used by ToolDispatch.build_tool_descriptions) ───────
 
@@ -208,6 +213,16 @@ func get_tool_description(tool_name: String) -> String:
 			return "Get current screen timeout in seconds"
 		"share_text":
 			return "Share text via Android share sheet. Args: \"text\""
+		"write_file":
+			return "Save text content to a file in Downloads. Args: \"filename\", \"content\""
+		"list_directory":
+			return "List files in a directory. Args: \"path\" (e.g. \"downloads\", \"dcim\", \"documents\", or full path)"
+		"add_contact":
+			return "Add a new contact. Args: \"name\", \"phone\""
+		"get_bluetooth_devices":
+			return "List paired Bluetooth devices"
+		"get_nfc_status":
+			return "Check if NFC is available and enabled"
 		_:
 			return ""
 
@@ -291,6 +306,16 @@ func get_tool_schema(tool_name: String) -> Dictionary:
 			return {"type": "object", "properties": {}}
 		"share_text":
 			return {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+		"write_file":
+			return {"type": "object", "properties": {"filename": {"type": "string"}, "content": {"type": "string"}}, "required": ["filename", "content"]}
+		"list_directory":
+			return {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}
+		"add_contact":
+			return {"type": "object", "properties": {"name": {"type": "string"}, "phone": {"type": "string"}}, "required": ["name", "phone"]}
+		"get_bluetooth_devices":
+			return {"type": "object", "properties": {}}
+		"get_nfc_status":
+			return {"type": "object", "properties": {}}
 		_:
 			return {}
 
@@ -376,6 +401,16 @@ func call_tool(tool_name: String, args: Dictionary) -> String:
 			return _tool_get_screen_timeout()
 		"share_text":
 			return _tool_share_text(args)
+		"write_file":
+			return _tool_write_file(args)
+		"list_directory":
+			return _tool_list_directory(args)
+		"add_contact":
+			return _tool_add_contact(args)
+		"get_bluetooth_devices":
+			return _tool_get_bluetooth_devices()
+		"get_nfc_status":
+			return _tool_get_nfc_status()
 		_:
 			return "Error: Unknown built-in tool '%s'" % tool_name
 
@@ -841,3 +876,91 @@ func _tool_share_text(args: Dictionary) -> String:
 		_plugin.shareText(text)
 		return "Share sheet opened"
 	return "Error: share only available on Android with plugin"
+
+# ── Nice to have tools ──────────────────────────────────────────────────────
+
+func _tool_write_file(args: Dictionary) -> String:
+	var filename: String = args.get("filename", args.get("arg0", ""))
+	var content: String = args.get("content", args.get("arg1", ""))
+	if filename.is_empty() or content.is_empty():
+		return "Error: filename and content required"
+	if _plugin:
+		var result: String = _plugin.writeFile(filename, content)
+		return result
+	return "Error: file write only available on Android with plugin"
+
+func _tool_list_directory(args: Dictionary) -> String:
+	var path: String = args.get("input", args.get("path", args.get("arg0", "")))
+	if path.is_empty():
+		path = "downloads"
+	if _plugin:
+		var result: String = _plugin.listDirectory(path)
+		if result.begins_with("Error:"):
+			return result
+		var json := JSON.new()
+		if json.parse(result) == OK and json.data is Array:
+			var items: Array = json.data
+			if items.is_empty():
+				return "Directory is empty"
+			var lines: PackedStringArray = []
+			for item in items:
+				var d: Dictionary = item
+				var icon: String = "FILE"
+				if d.get("is_dir", false):
+					icon = "DIR "
+				var size: int = d.get("size", 0)
+				var name: String = d.get("name", "?")
+				if size > 1048576:
+					lines.append("  %s  %-40s  %.1f MB" % [icon, name, size / 1048576.0])
+				elif size > 1024:
+					lines.append("  %s  %-40s  %.1f KB" % [icon, name, size / 1024.0])
+				else:
+					lines.append("  %s  %-40s  %d B" % [icon, name, size])
+			return "Listing (%d items):\n%s" % [items.size(), "\n".join(lines)]
+		return "Directory: %s" % result
+	return "Error: list directory only available on Android with plugin"
+
+func _tool_add_contact(args: Dictionary) -> String:
+	var name: String = args.get("name", args.get("arg0", ""))
+	var phone: String = args.get("phone", args.get("arg1", ""))
+	if name.is_empty() or phone.is_empty():
+		return "Error: name and phone required"
+	if _plugin:
+		var result: String = _plugin.addContact(name, phone)
+		return result
+	return "Error: add contact only available on Android with plugin"
+
+func _tool_get_bluetooth_devices() -> String:
+	if _plugin:
+		var result: String = _plugin.getBluetoothDevices()
+		if result == "[]":
+			return "Error: Bluetooth not available"
+		var json := JSON.new()
+		if json.parse(result) == OK:
+			var d: Dictionary = json.data
+			if not d.get("enabled", false):
+				return "Bluetooth is disabled"
+			var devices: Array = d.get("devices", [])
+			if devices.is_empty():
+				return "No paired Bluetooth devices"
+			var lines: PackedStringArray = []
+			for dev in devices:
+				var dd: Dictionary = dev
+				lines.append("- %s (%s)" % [dd.get("name", "?"), dd.get("address", "?")])
+			return "Paired devices (%d):\n%s" % [devices.size(), "\n".join(lines)]
+		return "Bluetooth: %s" % result
+	return "Error: Bluetooth only available on Android with plugin"
+
+func _tool_get_nfc_status() -> String:
+	if _plugin:
+		var result: String = _plugin.getNfcStatus()
+		var json := JSON.new()
+		if json.parse(result) == OK:
+			var d: Dictionary = json.data
+			if not d.get("available", false):
+				return "NFC not available on this device"
+			if d.get("enabled", false):
+				return "NFC is enabled"
+			return "NFC available but disabled"
+		return "NFC: %s" % result
+	return "Error: NFC only available on Android with plugin"
