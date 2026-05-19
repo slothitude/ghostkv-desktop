@@ -3,6 +3,7 @@ extends Node
 signal listening_changed(active: bool)
 signal voice_mode_changed(active: bool)
 signal speech_partial(text: String)
+signal speaking_changed(active: bool)
 
 var _voice_mode: bool = false
 var _auto_tts: bool = false
@@ -77,6 +78,15 @@ func _deactivate_voice_mode() -> void:
 	if _plugin and _plugin.isSpeaking():
 		_plugin.stopSpeaking()
 	_is_speaking = false
+	speaking_changed.emit(false)
+	if not _voice_mode or not _plugin:
+		return
+	if _plugin.isSpeaking():
+		_plugin.stopSpeaking()
+	_is_speaking = false
+	speaking_changed.emit(false)
+	_pending_restart = false
+	_start_voice_listening()
 
 func _start_voice_listening() -> void:
 	if not _plugin or not _voice_mode:
@@ -112,7 +122,18 @@ func _on_speech_result(text: String) -> void:
 	listening_changed.emit(false)
 
 	if _voice_mode:
-		_send_voice_message(text)
+		if _is_speaking:
+			# Barge-in: stop TTS and treat this as new input
+			if _plugin:
+				_plugin.stopSpeaking()
+			_is_speaking = false
+			_send_voice_message(text)
+			# Don't restart mic here — tts_completed won't fire since we stopped TTS
+			_pending_restart = true
+			get_tree().create_timer(0.3).timeout.connect(_on_restart_timer)
+		else:
+			_send_voice_message(text)
+			# Don't restart mic — wait for tts_completed to restart
 	else:
 		if _input_bar and _input_bar.has_method("set_dictated_text"):
 			_input_bar.set_dictated_text(text)
@@ -139,12 +160,6 @@ func _on_restart_timer() -> void:
 func _on_speech_partial(text: String) -> void:
 	speech_partial.emit(text)
 
-	# Barge-in: if speaking and partial result comes in, stop TTS
-	if _voice_mode and _is_speaking and text.length() > 3:
-		if _plugin:
-			_plugin.stopSpeaking()
-		_is_speaking = false
-
 func _on_listening_state(active: bool) -> void:
 	_is_listening = active
 	listening_changed.emit(active)
@@ -152,6 +167,8 @@ func _on_listening_state(active: bool) -> void:
 func _on_tts_completed(utterance_id: String) -> void:
 	if utterance_id == _tts_utterance_id:
 		_is_speaking = false
+		speaking_changed.emit(false)
+		# Restart listening after TTS finishes
 		if _voice_mode:
 			_pending_restart = true
 			get_tree().create_timer(0.3).timeout.connect(_on_restart_timer)
@@ -193,6 +210,7 @@ func _on_answer_ready(text: String) -> void:
 
 	_tts_utterance_id = "voice_chat_%d" % Time.get_ticks_msec()
 	_is_speaking = true
+	speaking_changed.emit(true)
 	_plugin.speakWithId(spoken, _tts_utterance_id)
 
 func _strip_markdown(text: String) -> String:

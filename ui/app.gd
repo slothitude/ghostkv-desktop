@@ -169,6 +169,7 @@ func _ready() -> void:
 			_voice_mgr.set_input_bar(_input_bar)
 		_voice_mgr.voice_mode_changed.connect(_on_voice_mode_changed)
 		_voice_mgr.listening_changed.connect(_on_listening_state)
+		_voice_mgr.speaking_changed.connect(_on_speaking_state)
 
 	# Connect signals
 	_input_bar.message_sent.connect(_on_message_sent)
@@ -344,17 +345,33 @@ func _on_voice_mode_changed(active: bool) -> void:
 	_voice_overlay.visible = active
 	if active:
 		_position_voice_overlay()
+		# Reset to mic icon + purple
+		_set_overlay_listening_style()
 
 func _on_voice_overlay_tap() -> void:
-	if _voice_mgr:
-		_voice_mgr.toggle_voice_mode()
+	if _voice_mgr and _voice_mgr.is_voice_mode():
+		_voice_mgr.barge_in()
 
 func _on_listening_state(active: bool) -> void:
 	if not _voice_overlay.visible:
 		return
 	if active:
+		_set_overlay_listening_style()
 		_voice_overlay_pulse()
 	else:
+		if _voice_overlay_tween:
+			_voice_overlay_tween.kill()
+			_voice_overlay_tween = null
+		_voice_overlay.modulate.a = 1.0
+
+func _on_speaking_state(speaking: bool) -> void:
+	if not _voice_overlay.visible:
+		return
+	if speaking:
+		_set_overlay_speaking_style()
+		_voice_overlay_pulse()
+	else:
+		_set_overlay_listening_style()
 		if _voice_overlay_tween:
 			_voice_overlay_tween.kill()
 			_voice_overlay_tween = null
@@ -367,6 +384,36 @@ func _voice_overlay_pulse() -> void:
 	_voice_overlay_tween.set_loops()
 	_voice_overlay_tween.tween_property(_voice_overlay, "modulate:a", 0.4, 0.6).set_trans(Tween.TRANS_SINE)
 	_voice_overlay_tween.tween_property(_voice_overlay, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE)
+
+func _set_overlay_listening_style() -> void:
+	var mic_icon := load("res://assets/icons/mic.svg")
+	if mic_icon:
+		_voice_overlay.icon = mic_icon
+	_voice_overlay.tooltip_text = "Listening..."
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color("#6c63ff")
+	bg.corner_radius_top_left = 32
+	bg.corner_radius_top_right = 32
+	bg.corner_radius_bottom_left = 32
+	bg.corner_radius_bottom_right = 32
+	bg.shadow_color = Color(0, 0, 0, 0.4)
+	bg.shadow_size = 8
+	_voice_overlay.add_theme_stylebox_override("normal", bg)
+
+func _set_overlay_speaking_style() -> void:
+	var stop_icon := load("res://assets/icons/stop.svg")
+	if stop_icon:
+		_voice_overlay.icon = stop_icon
+	_voice_overlay.tooltip_text = "Tap to interrupt"
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color("#ff4466")
+	bg.corner_radius_top_left = 32
+	bg.corner_radius_top_right = 32
+	bg.corner_radius_bottom_left = 32
+	bg.corner_radius_bottom_right = 32
+	bg.shadow_color = Color(0, 0, 0, 0.4)
+	bg.shadow_size = 8
+	_voice_overlay.add_theme_stylebox_override("normal", bg)
 
 func _position_voice_overlay() -> void:
 	# Bottom-right corner with margin
