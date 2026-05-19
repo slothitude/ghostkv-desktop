@@ -114,6 +114,17 @@ func _register_tools() -> void:
 	td.register_tool("get_notifications", "builtin", self)
 	td.register_tool("add_trusted_contact", "builtin", self)
 	td.register_tool("list_trusted_contacts", "builtin", self)
+	td.register_tool("media_control", "builtin", self)
+	td.register_tool("get_volume", "builtin", self)
+	td.register_tool("set_volume", "builtin", self)
+	td.register_tool("get_brightness", "builtin", self)
+	td.register_tool("set_brightness", "builtin", self)
+	td.register_tool("get_battery", "builtin", self)
+	td.register_tool("get_wifi_info", "builtin", self)
+	td.register_tool("wake_screen", "builtin", self)
+	td.register_tool("set_screen_timeout", "builtin", self)
+	td.register_tool("get_screen_timeout", "builtin", self)
+	td.register_tool("share_text", "builtin", self)
 
 # ── Tool descriptions (used by ToolDispatch.build_tool_descriptions) ───────
 
@@ -175,6 +186,28 @@ func get_tool_description(tool_name: String) -> String:
 			return "Add a contact to the trusted list so SMS/calls to them skip confirmation. Args: \"phone\", \"name\", \"trust\" (\"full\" or \"temp\")"
 		"list_trusted_contacts":
 			return "List all trusted contacts and their trust levels (full=temp=needs confirm, full=auto-send)"
+		"media_control":
+			return "Control media playback. Args: \"action\" (\"play\", \"pause\", \"next\", \"previous\")"
+		"get_volume":
+			return "Get current volume level. Args: \"stream\" (\"music\", \"ring\", \"alarm\", \"notification\", \"system\", \"voice_call\")"
+		"set_volume":
+			return "Set volume level. Args: \"stream\", \"volume\" (integer)"
+		"get_brightness":
+			return "Get screen brightness (0-255)"
+		"set_brightness":
+			return "Set screen brightness. Args: \"brightness\" (0-255)"
+		"get_battery":
+			return "Get battery status: level, charging state, health, power source"
+		"get_wifi_info":
+			return "Get WiFi info: SSID, IP, signal strength"
+		"wake_screen":
+			return "Wake up the screen if it's off"
+		"set_screen_timeout":
+			return "Set screen timeout. Args: \"seconds\" (0 = never)"
+		"get_screen_timeout":
+			return "Get current screen timeout in seconds"
+		"share_text":
+			return "Share text via Android share sheet. Args: \"text\""
 		_:
 			return ""
 
@@ -236,6 +269,28 @@ func get_tool_schema(tool_name: String) -> Dictionary:
 			return {"type": "object", "properties": {"phone": {"type": "string"}, "name": {"type": "string"}, "trust": {"type": "string"}}, "required": ["phone", "name", "trust"]}
 		"list_trusted_contacts":
 			return {"type": "object", "properties": {}}
+		"media_control":
+			return {"type": "object", "properties": {"action": {"type": "string"}}, "required": ["action"]}
+		"get_volume":
+			return {"type": "object", "properties": {"stream": {"type": "string"}}, "required": ["stream"]}
+		"set_volume":
+			return {"type": "object", "properties": {"stream": {"type": "string"}, "volume": {"type": "string"}}, "required": ["stream", "volume"]}
+		"get_brightness":
+			return {"type": "object", "properties": {}}
+		"set_brightness":
+			return {"type": "object", "properties": {"brightness": {"type": "string"}}, "required": ["brightness"]}
+		"get_battery":
+			return {"type": "object", "properties": {}}
+		"get_wifi_info":
+			return {"type": "object", "properties": {}}
+		"wake_screen":
+			return {"type": "object", "properties": {}}
+		"set_screen_timeout":
+			return {"type": "object", "properties": {"seconds": {"type": "string"}}, "required": ["seconds"]}
+		"get_screen_timeout":
+			return {"type": "object", "properties": {}}
+		"share_text":
+			return {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
 		_:
 			return {}
 
@@ -299,6 +354,28 @@ func call_tool(tool_name: String, args: Dictionary) -> String:
 			return _tool_add_trusted_contact(args)
 		"list_trusted_contacts":
 			return _tool_list_trusted_contacts()
+		"media_control":
+			return _tool_media_control(args)
+		"get_volume":
+			return _tool_get_volume(args)
+		"set_volume":
+			return _tool_set_volume(args)
+		"get_brightness":
+			return _tool_get_brightness()
+		"set_brightness":
+			return _tool_set_brightness(args)
+		"get_battery":
+			return _tool_get_battery()
+		"get_wifi_info":
+			return _tool_get_wifi_info()
+		"wake_screen":
+			return _tool_wake_screen()
+		"set_screen_timeout":
+			return _tool_set_screen_timeout(args)
+		"get_screen_timeout":
+			return _tool_get_screen_timeout()
+		"share_text":
+			return _tool_share_text(args)
 		_:
 			return "Error: Unknown built-in tool '%s'" % tool_name
 
@@ -657,3 +734,110 @@ func _tool_list_trusted_contacts() -> String:
 		var entry: Dictionary = _trusted_contacts[phone]
 		lines.append("- %s (%s): %s" % [entry.get("name", "?"), phone, entry.get("trust", "temp")])
 	return "Trusted contacts:\n" + "\n".join(lines)
+
+# ── Medium value tools ──────────────────────────────────────────────────────
+
+func _tool_media_control(args: Dictionary) -> String:
+	var action: String = args.get("input", args.get("action", args.get("arg0", "")))
+	if action.is_empty():
+		return "Error: action required (play, pause, next, previous)"
+	if action != "play" and action != "pause" and action != "next" and action != "previous":
+		return "Error: invalid action '%s'. Use play, pause, next, or previous" % action
+	if _plugin:
+		_plugin.mediaControl(action)
+		return "Media: %s" % action
+	return "Error: media control only available on Android with plugin"
+
+func _tool_get_volume(args: Dictionary) -> String:
+	var stream: String = args.get("input", args.get("stream", args.get("arg0", "music")))
+	if _plugin:
+		var vol: int = _plugin.getVolume(stream)
+		var max_vol: int = _plugin.getMaxVolume(stream)
+		return "Volume (%s): %d / %d" % [stream, vol, max_vol]
+	return "Error: volume only available on Android with plugin"
+
+func _tool_set_volume(args: Dictionary) -> String:
+	var stream: String = args.get("stream", args.get("arg0", "music"))
+	var vol_str: String = args.get("volume", args.get("arg1", ""))
+	if vol_str.is_empty():
+		return "Error: volume value required"
+	var vol: int = int(vol_str)
+	if _plugin:
+		_plugin.setVolume(stream, vol)
+		return "Volume (%s) set to %d" % [stream, vol]
+	return "Error: volume only available on Android with plugin"
+
+func _tool_get_brightness() -> String:
+	if _plugin:
+		var b: float = _plugin.getBrightness()
+		if b < 0:
+			return "Error: could not read brightness"
+		return "Brightness: %d / 255 (%.0f%%)" % [int(b), b / 255.0 * 100]
+	return "Error: brightness only available on Android with plugin"
+
+func _tool_set_brightness(args: Dictionary) -> String:
+	var b_str: String = args.get("input", args.get("brightness", args.get("arg0", "")))
+	if b_str.is_empty():
+		return "Error: brightness value required (0-255)"
+	var b: int = int(b_str)
+	if _plugin:
+		_plugin.setBrightness(b)
+		return "Brightness set to %d / 255" % b
+	return "Error: brightness only available on Android with plugin"
+
+func _tool_get_battery() -> String:
+	if _plugin:
+		var result: String = _plugin.getBatteryStatus()
+		if result == "{}":
+			return "Error: could not read battery status"
+		var json := JSON.new()
+		if json.parse(result) == OK:
+			var d: Dictionary = json.data
+			return "Battery: %d%% | %s | plugged: %s | health: %s" % [d.get("level", 0), d.get("status", "?"), d.get("plugged", "?"), d.get("health", "?")]
+		return "Battery: %s" % result
+	return "Error: battery status only available on Android with plugin"
+
+func _tool_get_wifi_info() -> String:
+	if _plugin:
+		var result: String = _plugin.getWifiInfo()
+		if result == "{}":
+			return "Error: could not read WiFi info"
+		var json := JSON.new()
+		if json.parse(result) == OK:
+			var d: Dictionary = json.data
+			if not d.get("enabled", false):
+				return "WiFi is disabled"
+			return "WiFi: %s | IP: %s | Signal: %d/4 (RSSI: %d)" % [d.get("ssid", "?"), d.get("ip", "?"), d.get("signal_level", 0), d.get("rssi", 0)]
+		return "WiFi: %s" % result
+	return "Error: WiFi info only available on Android with plugin"
+
+func _tool_wake_screen() -> String:
+	if _plugin:
+		_plugin.wakeScreen()
+		return "Screen woken"
+	return "Error: screen control only available on Android with plugin"
+
+func _tool_set_screen_timeout(args: Dictionary) -> String:
+	var s_str: String = args.get("input", args.get("seconds", args.get("arg0", "30")))
+	var seconds: int = int(s_str)
+	if _plugin:
+		_plugin.setScreenTimeout(seconds)
+		return "Screen timeout set to %d seconds" % seconds
+	return "Error: screen control only available on Android with plugin"
+
+func _tool_get_screen_timeout() -> String:
+	if _plugin:
+		var t: int = _plugin.getScreenTimeout()
+		if t < 0:
+			return "Error: could not read screen timeout"
+		return "Screen timeout: %d seconds" % t
+	return "Error: screen control only available on Android with plugin"
+
+func _tool_share_text(args: Dictionary) -> String:
+	var text: String = args.get("input", args.get("text", args.get("arg0", "")))
+	if text.is_empty():
+		return "Error: text required"
+	if _plugin:
+		_plugin.shareText(text)
+		return "Share sheet opened"
+	return "Error: share only available on Android with plugin"

@@ -17,10 +17,14 @@ import android.hardware.camera2.CameraManager;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.media.AudioManager;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
@@ -29,9 +33,11 @@ import android.provider.CalendarContract;
 import android.provider.CallLog;
 import android.provider.ContactsContract;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.speech.RecognizerIntent;
 import android.speech.tts.TextToSpeech;
 import android.telephony.SmsManager;
+import android.view.WindowManager;
 import android.widget.Toast;
 
 import androidx.core.app.ActivityCompat;
@@ -834,6 +840,230 @@ public class GhostKVPlugin extends GodotPlugin {
         if (activity == null) return;
         Intent intent = new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS");
         activity.startActivity(intent);
+    }
+
+    // ── Media control ─────────────────────────────────────────────
+
+    @UsedByGodot
+    public void mediaControl(String action) {
+        Activity activity = getActivity();
+        if (activity == null) return;
+        Intent intent = new Intent(action);
+        // Simulate media button key event for reliable control
+        switch (action) {
+            case "play":
+                intent.setAction("com.android.intent.action.MEDIA_BUTTON");
+                intent.putExtra(Intent.EXTRA_KEY_EVENT, new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PLAY));
+                activity.sendOrderedBroadcast(intent, null);
+                break;
+            case "pause":
+                intent.setAction("com.android.intent.action.MEDIA_BUTTON");
+                intent.putExtra(Intent.EXTRA_KEY_EVENT, new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE));
+                activity.sendOrderedBroadcast(intent, null);
+                break;
+            case "next":
+                intent.setAction("com.android.intent.action.MEDIA_BUTTON");
+                intent.putExtra(Intent.EXTRA_KEY_EVENT, new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_NEXT));
+                activity.sendOrderedBroadcast(intent, null);
+                break;
+            case "previous":
+                intent.setAction("com.android.intent.action.MEDIA_BUTTON");
+                intent.putExtra(Intent.EXTRA_KEY_EVENT, new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS));
+                activity.sendOrderedBroadcast(intent, null);
+                break;
+        }
+    }
+
+    // ── Volume control ────────────────────────────────────────────
+
+    @UsedByGodot
+    public int getVolume(String streamType) {
+        Activity activity = getActivity();
+        if (activity == null) return -1;
+        AudioManager am = (AudioManager) activity.getSystemService(Context.AUDIO_SERVICE);
+        int stream = _streamTypeToInt(streamType);
+        return am.getStreamVolume(stream);
+    }
+
+    @UsedByGodot
+    public int getMaxVolume(String streamType) {
+        Activity activity = getActivity();
+        if (activity == null) return -1;
+        AudioManager am = (AudioManager) activity.getSystemService(Context.AUDIO_SERVICE);
+        int stream = _streamTypeToInt(streamType);
+        return am.getStreamMaxVolume(stream);
+    }
+
+    @UsedByGodot
+    public void setVolume(String streamType, int volume) {
+        Activity activity = getActivity();
+        if (activity == null) return;
+        AudioManager am = (AudioManager) activity.getSystemService(Context.AUDIO_SERVICE);
+        int stream = _streamTypeToInt(streamType);
+        int max = am.getStreamMaxVolume(stream);
+        if (volume < 0) volume = 0;
+        if (volume > max) volume = max;
+        am.setStreamVolume(stream, volume, 0);
+    }
+
+    private int _streamTypeToInt(String streamType) {
+        switch (streamType.toLowerCase()) {
+            case "ring": return AudioManager.STREAM_RING;
+            case "alarm": return AudioManager.STREAM_ALARM;
+            case "notification": return AudioManager.STREAM_NOTIFICATION;
+            case "system": return AudioManager.STREAM_SYSTEM;
+            case "voice_call": return AudioManager.STREAM_VOICE_CALL;
+            default: return AudioManager.STREAM_MUSIC;
+        }
+    }
+
+    // ── Brightness control ────────────────────────────────────────
+
+    @UsedByGodot
+    public float getBrightness() {
+        Activity activity = getActivity();
+        if (activity == null) return -1;
+        try {
+            return Settings.System.getFloat(activity.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS);
+        } catch (Settings.SettingNotFoundException e) {
+            return -1;
+        }
+    }
+
+    @UsedByGodot
+    public void setBrightness(int brightness) {
+        Activity activity = getActivity();
+        if (activity == null) return;
+        if (brightness < 0) brightness = 0;
+        if (brightness > 255) brightness = 255;
+        // Enable manual brightness mode
+        Settings.System.putInt(activity.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+        Settings.System.putInt(activity.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, brightness);
+    }
+
+    // ── Battery status ────────────────────────────────────────────
+
+    @UsedByGodot
+    public String getBatteryStatus() {
+        Activity activity = getActivity();
+        if (activity == null) return "{}";
+        android.content.IntentFilter filter = new android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        android.content.Intent batteryIntent = activity.registerReceiver(null, filter);
+        if (batteryIntent == null) return "{}";
+
+        int level = batteryIntent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1);
+        int scale = batteryIntent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1);
+        int status = batteryIntent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1);
+        int plugged = batteryIntent.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, -1);
+        int health = batteryIntent.getIntExtra(android.os.BatteryManager.EXTRA_HEALTH, -1);
+        float pct = (scale > 0) ? (level * 100.0f / scale) : 0;
+
+        String statusStr;
+        switch (status) {
+            case android.os.BatteryManager.BATTERY_STATUS_CHARGING: statusStr = "charging"; break;
+            case android.os.BatteryManager.BATTERY_STATUS_DISCHARGING: statusStr = "discharging"; break;
+            case android.os.BatteryManager.BATTERY_STATUS_FULL: statusStr = "full"; break;
+            case android.os.BatteryManager.BATTERY_STATUS_NOT_CHARGING: statusStr = "not_charging"; break;
+            default: statusStr = "unknown";
+        }
+
+        String pluggedStr;
+        switch (plugged) {
+            case android.os.BatteryManager.BATTERY_PLUGGED_AC: pluggedStr = "ac"; break;
+            case android.os.BatteryManager.BATTERY_PLUGGED_USB: pluggedStr = "usb"; break;
+            case android.os.BatteryManager.BATTERY_PLUGGED_WIRELESS: pluggedStr = "wireless"; break;
+            default: pluggedStr = "none";
+        }
+
+        String healthStr;
+        switch (health) {
+            case android.os.BatteryManager.BATTERY_HEALTH_GOOD: healthStr = "good"; break;
+            case android.os.BatteryManager.BATTERY_HEALTH_OVERHEAT: healthStr = "overheat"; break;
+            case android.os.BatteryManager.BATTERY_HEALTH_DEAD: healthStr = "dead"; break;
+            case android.os.BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE: healthStr = "over_voltage"; break;
+            default: healthStr = "unknown";
+        }
+
+        return "{\"level\":" + Math.round(pct) + ",\"status\":\"" + statusStr
+            + "\",\"plugged\":\"" + pluggedStr + "\",\"health\":\"" + healthStr + "\"}";
+    }
+
+    // ── WiFi info ─────────────────────────────────────────────────
+
+    @UsedByGodot
+    public String getWifiInfo() {
+        Activity activity = getActivity();
+        if (activity == null) return "{}";
+        WifiManager wm = (WifiManager) activity.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm == null || !wm.isWifiEnabled()) return "{\"enabled\":false}";
+
+        WifiInfo info = wm.getConnectionInfo();
+        String ssid = info.getSSID();
+        // Remove quotes from SSID
+        if (ssid != null && ssid.startsWith("\"") && ssid.endsWith("\"")) {
+            ssid = ssid.substring(1, ssid.length() - 1);
+        }
+        // Android 8.1+ returns <unknown ssid> without location permission
+        if (ssid == null || ssid.equals("<unknown ssid>")) {
+            boolean hasLocation = ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+            ssid = hasLocation ? "unknown" : "unknown (enable location permission)";
+        }
+        int ip = info.getIpAddress();
+        String ipStr = (ip == 0) ? "0.0.0.0" :
+            String.format("%d.%d.%d.%d", ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff);
+        int rssi = info.getRssi();
+        int level = android.net.wifi.WifiManager.calculateSignalLevel(rssi, 5);
+
+        return "{\"enabled\":true,\"ssid\":\"" + ssid.replace("\"", "'")
+            + "\",\"ip\":\"" + ipStr
+            + "\",\"rssi\":" + rssi
+            + ",\"signal_level\":" + level + "}";
+    }
+
+    // ── Screen control ────────────────────────────────────────────
+
+    @UsedByGodot
+    public void wakeScreen() {
+        Activity activity = getActivity();
+        if (activity == null) return;
+        PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+        PowerManager.WakeLock wl = pm.newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP,
+            "GhostKV::WakeScreen");
+        wl.acquire(3000); // 3 seconds
+        wl.release();
+    }
+
+    @UsedByGodot
+    public void setScreenTimeout(int seconds) {
+        Activity activity = getActivity();
+        if (activity == null) return;
+        Settings.System.putInt(activity.getContentResolver(), Settings.System.SCREEN_OFF_TIMEOUT, seconds * 1000);
+    }
+
+    @UsedByGodot
+    public int getScreenTimeout() {
+        Activity activity = getActivity();
+        if (activity == null) return -1;
+        try {
+            return Settings.System.getInt(activity.getContentResolver(), Settings.System.SCREEN_OFF_TIMEOUT) / 1000;
+        } catch (Settings.SettingNotFoundException e) {
+            return -1;
+        }
+    }
+
+    // ── Share intent ──────────────────────────────────────────────
+
+    @UsedByGodot
+    public void shareText(String text) {
+        Activity activity = getActivity();
+        if (activity == null) return;
+        Intent intent = new Intent(Intent.ACTION_SEND);
+        intent.setType("text/plain");
+        intent.putExtra(Intent.EXTRA_TEXT, text);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        activity.startActivity(Intent.createChooser(intent, "Share via"));
     }
 
     // ── Permission handling ──────────────────────────────────────────
