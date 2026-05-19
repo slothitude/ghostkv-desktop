@@ -5,11 +5,17 @@ signal message_sent(text: String)
 var _input: LineEdit
 var _send_btn: Button
 var _stop_btn: Button
+var _mic_btn: Button
 var _state: Node
 var _is_streaming: bool = false
+var _is_android: bool = false
+var _mic_tween: Tween = null
 
 func _ready() -> void:
 	_state = Engine.get_singleton("AppState")
+
+	# Detect Android
+	_is_android = OS.has_feature("android")
 
 	# Input field
 	_input = LineEdit.new()
@@ -39,6 +45,38 @@ func _ready() -> void:
 	input_focus.bg_color = Color("#1e1e36")
 	_input.add_theme_stylebox_override("focused", input_focus)
 	add_child(_input)
+
+	# Mic button (Android only)
+	_mic_btn = Button.new()
+	var mic_icon := load("res://assets/icons/mic.svg")
+	if mic_icon:
+		_mic_btn.icon = mic_icon
+	else:
+		_mic_btn.text = "🎤"
+	_mic_btn.custom_minimum_size = Vector2(48, 48)
+	_mic_btn.tooltip_text = "Voice input"
+	_mic_btn.visible = _is_android
+	var mic_bg := StyleBoxFlat.new()
+	mic_bg.bg_color = Color("#1a1a28")
+	mic_bg.border_color = Color("#2a2a40")
+	mic_bg.border_width_bottom = 2
+	mic_bg.corner_radius_top_left = 10
+	mic_bg.corner_radius_top_right = 10
+	mic_bg.corner_radius_bottom_left = 10
+	mic_bg.corner_radius_bottom_right = 10
+	_mic_btn.add_theme_stylebox_override("normal", mic_bg)
+	var mic_pressed := mic_bg.duplicate()
+	mic_pressed.bg_color = Color("#2a1a38")
+	mic_pressed.border_color = Color("#6c63ff")
+	_mic_btn.add_theme_stylebox_override("pressed", mic_pressed)
+	_mic_btn.pressed.connect(_on_mic_pressed)
+	add_child(_mic_btn)
+
+	# Connect voice manager listening signal
+	if _is_android:
+		var vm := Engine.get_singleton("VoiceManager") as Node
+		if vm:
+			vm.listening_changed.connect(_on_listening_changed)
 
 	# Send button
 	_send_btn = Button.new()
@@ -110,6 +148,8 @@ func _on_busy_changed(busy: bool) -> void:
 	_send_btn.visible = not busy
 	_stop_btn.visible = busy
 	_stop_btn.disabled = false
+	if _mic_btn:
+		_mic_btn.visible = (not busy) and _is_android
 	if busy:
 		_input.placeholder_text = "GhostKV is thinking..."
 		_is_streaming = false
@@ -130,4 +170,35 @@ func _on_streaming_done(_text: String = "") -> void:
 		_input.placeholder_text = "Ask GhostKV anything..."
 
 func focus_input() -> void:
+	_input.grab_focus()
+
+func _on_mic_pressed() -> void:
+	var vm := Engine.get_singleton("VoiceManager") as Node
+	if vm:
+		vm.start_listening()
+
+func _on_listening_changed(active: bool) -> void:
+	if not _mic_btn:
+		return
+	if active:
+		# Pulsing animation while listening
+		_mic_pulse()
+	else:
+		# Stop animation, reset opacity
+		if _mic_tween:
+			_mic_tween.kill()
+			_mic_tween = null
+		_mic_btn.modulate.a = 1.0
+
+func _mic_pulse() -> void:
+	if _mic_tween:
+		_mic_tween.kill()
+	_mic_tween = create_tween()
+	_mic_tween.set_loops()
+	_mic_tween.tween_property(_mic_btn, "modulate:a", 0.3, 0.5).set_trans(Tween.TRANS_SINE)
+	_mic_tween.tween_property(_mic_btn, "modulate:a", 1.0, 0.5).set_trans(Tween.TRANS_SINE)
+
+func set_dictated_text(text: String) -> void:
+	_input.text = text
+	_input.caret_column = text.length()
 	_input.grab_focus()

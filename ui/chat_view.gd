@@ -134,17 +134,9 @@ func _on_answer(text: String) -> void:
 		_streaming_bubble.finalize_stream(text)
 		_streaming_bubble = null
 	else:
-		var md := Engine.get_singleton("Markdown") as Node
-		var bbcode: String = md.to_bbcode(text)
-		var children := _vbox.get_children()
-		if children.size() > 0:
-			var last := children[children.size() - 1]
-			if last.has_method("update_text"):
-				last.update_text(bbcode)
-			else:
-				add_message("assistant", text)
-		else:
-			add_message("assistant", text)
+		# Wait one frame so queue_free() on thinking bubble completes
+		await get_tree().process_frame
+		add_message("assistant", text)
 
 	await get_tree().process_frame
 	scroll_vertical = get_v_scroll_bar().max_value

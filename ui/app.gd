@@ -10,10 +10,13 @@ var _input_bar: Control
 var _status_bar: Control
 var _clear_btn: Button
 var _menu_btn: Button
+var _voice_btn: Button
+var _voice_overlay: Button
 var _sidebar_overlay: ColorRect
 var _state: Node
 var _session_mgr: Node
 var _react_loop: Node
+var _voice_mgr: Node
 var _current_messages: Array = []
 var _audio: AudioStreamPlayer
 var _snd_send: AudioStream
@@ -21,6 +24,8 @@ var _snd_receive: AudioStream
 var _snd_error: AudioStream
 var _is_mobile: bool = false
 var _sidebar_open: bool = true
+var _is_android: bool = false
+var _voice_overlay_tween: Tween = null
 
 func _ready() -> void:
 	_state = Engine.get_singleton("AppState")
@@ -80,7 +85,7 @@ func _ready() -> void:
 	_chat_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	main_vbox.add_child(_chat_view)
 
-	# Status bar row (status + clear button)
+	# Status bar row (status + voice toggle + clear button)
 	var status_row := HBoxContainer.new()
 	main_vbox.add_child(status_row)
 
@@ -88,6 +93,27 @@ func _ready() -> void:
 	_status_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status_bar.custom_minimum_size.y = 36
 	status_row.add_child(_status_bar)
+
+	_is_android = OS.has_feature("android")
+
+	# Voice mode toggle button (Android only)
+	_voice_btn = Button.new()
+	_voice_btn.text = "Voice"
+	_voice_btn.add_theme_font_size_override("font_size", 11)
+	_voice_btn.tooltip_text = "Toggle voice chat mode"
+	_voice_btn.custom_minimum_size = Vector2(56, 36)
+	_voice_btn.add_theme_color_override("font_color", Color("#666680"))
+	_voice_btn.add_theme_color_override("font_hover_color", Color("#6c63ff"))
+	var voice_bg := StyleBoxFlat.new()
+	voice_bg.bg_color = Color("#141428")
+	voice_bg.corner_radius_top_left = 4
+	voice_bg.corner_radius_top_right = 4
+	voice_bg.corner_radius_bottom_left = 4
+	voice_bg.corner_radius_bottom_right = 4
+	_voice_btn.add_theme_stylebox_override("normal", voice_bg)
+	_voice_btn.visible = _is_android
+	_voice_btn.pressed.connect(_on_voice_toggle)
+	status_row.add_child(_voice_btn)
 
 	_clear_btn = Button.new()
 	_clear_btn.text = "Clear"
@@ -110,6 +136,39 @@ func _ready() -> void:
 	_input_bar = load("res://ui/input_bar.tscn").instantiate()
 	_input_bar.custom_minimum_size.y = 56
 	main_vbox.add_child(_input_bar)
+
+	# Floating voice overlay (Android only — circular mic button, bottom-right)
+	_voice_overlay = Button.new()
+	var mic_icon := load("res://assets/icons/mic.svg")
+	if mic_icon:
+		_voice_overlay.icon = mic_icon
+	else:
+		_voice_overlay.text = "🎤"
+	_voice_overlay.custom_minimum_size = Vector2(64, 64)
+	_voice_overlay.visible = false
+	_voice_overlay.z_index = 50
+	var overlay_bg := StyleBoxFlat.new()
+	overlay_bg.bg_color = Color("#6c63ff")
+	overlay_bg.corner_radius_top_left = 32
+	overlay_bg.corner_radius_top_right = 32
+	overlay_bg.corner_radius_bottom_left = 32
+	overlay_bg.corner_radius_bottom_right = 32
+	overlay_bg.shadow_color = Color(0, 0, 0, 0.4)
+	overlay_bg.shadow_size = 8
+	_voice_overlay.add_theme_stylebox_override("normal", overlay_bg)
+	var overlay_pressed := overlay_bg.duplicate()
+	overlay_pressed.bg_color = Color("#ff4466")
+	_voice_overlay.add_theme_stylebox_override("pressed", overlay_pressed)
+	_voice_overlay.pressed.connect(_on_voice_overlay_tap)
+	add_child(_voice_overlay)
+
+	# Voice manager setup
+	_voice_mgr = Engine.get_singleton("VoiceManager") as Node
+	if _voice_mgr:
+		if _voice_mgr.has_method("set_input_bar"):
+			_voice_mgr.set_input_bar(_input_bar)
+		_voice_mgr.voice_mode_changed.connect(_on_voice_mode_changed)
+		_voice_mgr.listening_changed.connect(_on_listening_state)
 
 	# Connect signals
 	_input_bar.message_sent.connect(_on_message_sent)
@@ -176,6 +235,8 @@ func _notification(what: int) -> void:
 		if new_mobile != _is_mobile:
 			_is_mobile = new_mobile
 			_apply_layout()
+		if _voice_overlay.visible:
+			_position_voice_overlay()
 
 func _on_message_sent(text: String) -> void:
 	_chat_view.add_message("user", text)
@@ -264,3 +325,52 @@ func _play_sound(stream: AudioStream) -> void:
 	if stream and _audio:
 		_audio.stream = stream
 		_audio.play()
+
+# ── Voice mode handlers ──────────────────────────────────────────
+
+func _on_voice_toggle() -> void:
+	if _voice_mgr:
+		_voice_mgr.toggle_voice_mode()
+
+func _on_voice_mode_changed(active: bool) -> void:
+	# Update voice button appearance
+	if _voice_btn:
+		if active:
+			_voice_btn.add_theme_color_override("font_color", Color("#6c63ff"))
+		else:
+			_voice_btn.add_theme_color_override("font_color", Color("#666680"))
+
+	# Show/hide floating overlay
+	_voice_overlay.visible = active
+	if active:
+		_position_voice_overlay()
+
+func _on_voice_overlay_tap() -> void:
+	if _voice_mgr:
+		_voice_mgr.toggle_voice_mode()
+
+func _on_listening_state(active: bool) -> void:
+	if not _voice_overlay.visible:
+		return
+	if active:
+		_voice_overlay_pulse()
+	else:
+		if _voice_overlay_tween:
+			_voice_overlay_tween.kill()
+			_voice_overlay_tween = null
+		_voice_overlay.modulate.a = 1.0
+
+func _voice_overlay_pulse() -> void:
+	if _voice_overlay_tween:
+		_voice_overlay_tween.kill()
+	_voice_overlay_tween = create_tween()
+	_voice_overlay_tween.set_loops()
+	_voice_overlay_tween.tween_property(_voice_overlay, "modulate:a", 0.4, 0.6).set_trans(Tween.TRANS_SINE)
+	_voice_overlay_tween.tween_property(_voice_overlay, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE)
+
+func _position_voice_overlay() -> void:
+	# Bottom-right corner with margin
+	_voice_overlay.position = Vector2(size.x - 80, size.y - 80)
+
+func send_voice_message(text: String) -> void:
+	_on_message_sent(text)

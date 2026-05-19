@@ -41,8 +41,11 @@ import android.provider.CallLog;
 import android.provider.ContactsContract;
 import android.provider.MediaStore;
 import android.provider.Settings;
+import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.telephony.SmsManager;
 import android.view.WindowManager;
 import android.widget.Toast;
@@ -77,6 +80,11 @@ public class GhostKVPlugin extends GodotPlugin {
     private TextToSpeech _tts;
     private boolean _ttsReady = false;
     private boolean _flashlightOn = false;
+    private SpeechRecognizer _speechRecognizer;
+    private boolean _isListening = false;
+    private Handler _mainHandler;
+    private String _pendingTtsText = null;
+    private String _pendingTtsId = null;
 
     public GhostKVPlugin(Godot godot) {
         super(godot);
@@ -97,6 +105,9 @@ public class GhostKVPlugin extends GodotPlugin {
         signals.add(new SignalInfo("location_received", Double.class, Double.class, Float.class));
         signals.add(new SignalInfo("speech_result", String.class));
         signals.add(new SignalInfo("speech_error", String.class));
+        signals.add(new SignalInfo("listening_state", Boolean.class));
+        signals.add(new SignalInfo("speech_partial", String.class));
+        signals.add(new SignalInfo("tts_completed", String.class));
         return signals;
     }
 
@@ -553,24 +564,83 @@ public class GhostKVPlugin extends GodotPlugin {
 
     // ── Text-to-Speech ───────────────────────────────────────────────
 
+    private void _initTts() {
+        Activity activity = getActivity();
+        if (activity == null || _tts != null) return;
+        _mainHandler = new Handler(Looper.getMainLooper());
+        _tts = new TextToSpeech(activity.getApplicationContext(), status -> {
+            _ttsReady = (status == TextToSpeech.SUCCESS);
+            if (_ttsReady && _tts != null) {
+                _tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                    @Override
+                    public void onStart(String utteranceId) {}
+                    @Override
+                    public void onError(String utteranceId) {
+                        emitSignal("tts_completed", utteranceId);
+                    }
+                    @Override
+                    public void onDone(String utteranceId) {
+                        emitSignal("tts_completed", utteranceId);
+                    }
+                });
+                // Flush any pending speech that was queued before TTS was ready
+                if (_pendingTtsText != null) {
+                    _tts.speak(_pendingTtsText, TextToSpeech.QUEUE_FLUSH, null, _pendingTtsId != null ? _pendingTtsId : "ghostkv_tts");
+                    _pendingTtsText = null;
+                    _pendingTtsId = null;
+                }
+            }
+        });
+    }
+
     /**
      * Speak text aloud using Android TTS.
      */
     @UsedByGodot
     public void speak(String text) {
-        Activity activity = getActivity();
-        if (activity == null || text == null || text.isEmpty()) return;
-
-        if (_tts == null) {
-            _tts = new TextToSpeech(activity.getApplicationContext(), status -> {
-                _ttsReady = (status == TextToSpeech.SUCCESS);
-                if (_ttsReady && _tts != null) {
-                    _tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ghostkv_tts");
-                }
-            });
-        } else if (_ttsReady) {
+        if (text == null || text.isEmpty()) return;
+        _initTts();
+        if (_ttsReady) {
             _tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ghostkv_tts");
+        } else {
+            _pendingTtsText = text;
+            _pendingTtsId = "ghostkv_tts";
         }
+    }
+
+    /**
+     * Speak text with a specific utterance ID for completion tracking.
+     */
+    @UsedByGodot
+    public void speakWithId(String text, String utteranceId) {
+        if (text == null || text.isEmpty()) return;
+        _initTts();
+        if (_ttsReady) {
+            _tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
+        } else {
+            // TTS not ready yet — queue for when init completes
+            _pendingTtsText = text;
+            _pendingTtsId = utteranceId;
+        }
+    }
+
+    /**
+     * Stop current TTS speech.
+     */
+    @UsedByGodot
+    public void stopSpeaking() {
+        if (_tts != null) {
+            _tts.stop();
+        }
+    }
+
+    /**
+     * Check if TTS is currently speaking.
+     */
+    @UsedByGodot
+    public boolean isSpeaking() {
+        if (_tts == null) return false;
+        return _tts.isSpeaking();
     }
 
     /**
@@ -581,28 +651,139 @@ public class GhostKVPlugin extends GodotPlugin {
         return _ttsReady;
     }
 
-    // ── Speech-to-Text ───────────────────────────────────────────────
+    // ── Speech-to-Text (in-app SpeechRecognizer) ─────────────────────
 
     /**
-     * Launch the speech recognition intent.
-     * Result is returned via the "speech_result" signal.
-     * On failure, emits "speech_error".
+     * Start continuous in-app speech recognition.
+     * Results via speech_result / speech_partial signals.
+     * Listening state via listening_state signal.
      */
     @UsedByGodot
-    public void startSpeechRecognition() {
+    public void startContinuousListening() {
         Activity activity = getActivity();
         if (activity == null) return;
 
-        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to GhostKV");
-
-        try {
-            activity.startActivityForResult(intent, 2001);
-        } catch (Exception e) {
-            emitSignal("speech_error", "Speech recognition not available: " + e.getMessage());
+        // Check RECORD_AUDIO permission
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.RECORD_AUDIO}, 1003);
+            emitSignal("speech_error", "RECORD_AUDIO permission requested — try again after granting");
+            return;
         }
+
+        // SpeechRecognizer MUST run on the main thread — post everything there
+        if (_mainHandler == null) {
+            _mainHandler = new Handler(Looper.getMainLooper());
+        }
+        _mainHandler.post(() -> _startListeningOnMainThread(activity));
+    }
+
+    private void _startListeningOnMainThread(Activity activity) {
+        try {
+            if (_speechRecognizer == null) {
+                _speechRecognizer = SpeechRecognizer.createSpeechRecognizer(activity);
+            }
+            if (_speechRecognizer == null) {
+                emitSignal("speech_error", "SpeechRecognizer not available on this device");
+                return;
+            }
+
+            _speechRecognizer.setRecognitionListener(new RecognitionListener() {
+                @Override public void onReadyForSpeech(Bundle params) {
+                    Vibrator vib = (Vibrator) activity.getSystemService(Context.VIBRATOR_SERVICE);
+                    if (vib != null) {
+                        vib.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE));
+                    }
+                }
+                @Override public void onBeginningOfSpeech() {}
+                @Override public void onRmsChanged(float rmsdB) {}
+                @Override public void onBufferReceived(byte[] buffer) {}
+                @Override public void onEndOfSpeech() {
+                    _isListening = false;
+                    emitSignal("listening_state", false);
+                }
+                @Override public void onError(int error) {
+                    _isListening = false;
+                    emitSignal("listening_state", false);
+                    if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                        emitSignal("speech_error", "NO_MATCH");
+                    } else {
+                        String msg;
+                        switch (error) {
+                            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT: msg = "network_timeout"; break;
+                            case SpeechRecognizer.ERROR_NETWORK: msg = "network_error"; break;
+                            case SpeechRecognizer.ERROR_AUDIO: msg = "audio_error"; break;
+                            case SpeechRecognizer.ERROR_CLIENT: msg = "client_error"; break;
+                            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: msg = "insufficient_permissions"; break;
+                            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: msg = "recognizer_busy"; break;
+                            case SpeechRecognizer.ERROR_SERVER: msg = "server_error"; break;
+                            default: msg = "error_" + error; break;
+                        }
+                        emitSignal("speech_error", msg);
+                    }
+                }
+                @Override public void onResults(Bundle results) {
+                    _isListening = false;
+                    emitSignal("listening_state", false);
+                    java.util.ArrayList<String> matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                    if (matches != null && !matches.isEmpty()) {
+                        emitSignal("speech_result", matches.get(0));
+                    }
+                }
+                @Override public void onPartialResults(Bundle partialResults) {
+                    java.util.ArrayList<String> partial = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                    if (partial != null && !partial.isEmpty()) {
+                        emitSignal("speech_partial", partial.get(0));
+                    }
+                }
+                @Override public void onEvent(int eventType, Bundle params) {}
+            });
+
+            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+
+            _speechRecognizer.startListening(intent);
+            _isListening = true;
+            emitSignal("listening_state", true);
+        } catch (Exception e) {
+            emitSignal("speech_error", "Failed to start listening: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Stop in-app speech recognition.
+     */
+    @UsedByGodot
+    public void stopListening() {
+        if (_speechRecognizer != null && _isListening) {
+            if (_mainHandler != null) {
+                _mainHandler.post(() -> {
+                    if (_speechRecognizer != null) {
+                        _speechRecognizer.stopListening();
+                    }
+                });
+            }
+            _isListening = false;
+            emitSignal("listening_state", false);
+        }
+    }
+
+    /**
+     * Check if currently listening for speech.
+     */
+    @UsedByGodot
+    public boolean isListening() {
+        return _isListening;
+    }
+
+    /**
+     * Launch the speech recognition intent (legacy — use startContinuousListening instead).
+     */
+    @UsedByGodot
+    public void startSpeechRecognition() {
+        startContinuousListening();
     }
 
     // ── Phone Calls ──────────────────────────────────────────────────
@@ -1218,5 +1399,18 @@ public class GhostKVPlugin extends GodotPlugin {
         Activity activity = getActivity();
         if (activity == null) return;
         ActivityCompat.requestPermissions(activity, new String[]{permission}, 1002);
+    }
+
+    @Override
+    public void onMainDestroy() {
+        if (_speechRecognizer != null) {
+            _speechRecognizer.destroy();
+            _speechRecognizer = null;
+        }
+        if (_tts != null) {
+            _tts.stop();
+            _tts.shutdown();
+            _tts = null;
+        }
     }
 }

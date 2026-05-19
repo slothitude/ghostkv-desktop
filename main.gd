@@ -82,6 +82,13 @@ func _ready() -> void:
 	add_child(_builtin_tools)
 	Engine.register_singleton("BuiltinTools", _builtin_tools)
 
+	# Voice manager (STT/TTS pipeline for voice chat)
+	var _voice_mgr = Node.new()
+	_voice_mgr.set_script(load("res://core/voice_manager.gd"))
+	_voice_mgr.name = "VoiceManager"
+	add_child(_voice_mgr)
+	Engine.register_singleton("VoiceManager", _voice_mgr)
+
 	# Load settings and configure API client
 	var settings: Dictionary = _session.load_settings()
 	if settings.has("api_base_url"):
