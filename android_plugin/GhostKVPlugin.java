@@ -2,15 +2,28 @@ package com.slothitude.ghostkv;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlarmManager;
 import android.app.PendingIntent;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
+import android.provider.AlarmClock;
+import android.provider.ContactsContract;
 import android.provider.MediaStore;
+import android.speech.RecognizerIntent;
+import android.speech.tts.TextToSpeech;
 import android.telephony.SmsManager;
 import android.widget.Toast;
 
@@ -40,6 +53,8 @@ public class GhostKVPlugin extends GodotPlugin {
     private static final int SMS_PERMISSION_CODE = 1001;
     private String pendingSmsPhone = "";
     private String pendingSmsMessage = "";
+    private TextToSpeech _tts;
+    private boolean _ttsReady = false;
 
     public GhostKVPlugin(Godot godot) {
         super(godot);
@@ -57,6 +72,9 @@ public class GhostKVPlugin extends GodotPlugin {
         signals.add(new SignalInfo("sms_sent", String.class));
         signals.add(new SignalInfo("sms_failed", String.class));
         signals.add(new SignalInfo("permission_result", String.class, Boolean.TYPE));
+        signals.add(new SignalInfo("location_received", Double.class, Double.class, Float.class));
+        signals.add(new SignalInfo("speech_result", String.class));
+        signals.add(new SignalInfo("speech_error", String.class));
         return signals;
     }
 
@@ -311,6 +329,257 @@ public class GhostKVPlugin extends GodotPlugin {
     public String getExternalStorageDir() {
         File dir = android.os.Environment.getExternalStorageDirectory();
         return dir != null ? dir.getAbsolutePath() : "";
+    }
+
+    // ── Contacts ─────────────────────────────────────────────────────
+
+    /**
+     * Read contacts from the phone. Returns JSON array of {name, phone} objects.
+     * @param query optional filter substring (empty = return all, max 50)
+     */
+    @UsedByGodot
+    public String getContacts(String query) {
+        Activity activity = getActivity();
+        if (activity == null) return "[]";
+
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS)
+                != PackageManager.PERMISSION_GRANTED) {
+            return "Error: READ_CONTACTS permission not granted";
+        }
+
+        ContentResolver cr = activity.getContentResolver();
+        String selection = null;
+        String[] selectionArgs = null;
+        if (query != null && !query.isEmpty()) {
+            selection = ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " LIKE ?";
+            selectionArgs = new String[]{"%" + query + "%"};
+        }
+
+        Cursor cursor = cr.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                new String[]{ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                        ContactsContract.CommonDataKinds.Phone.NUMBER},
+                selection, selectionArgs,
+                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC");
+
+        StringBuilder json = new StringBuilder("[");
+        if (cursor != null) {
+            boolean first = true;
+            int count = 0;
+            while (cursor.moveToNext() && count < 50) {
+                String name = cursor.getString(0);
+                String phone = cursor.getString(1);
+                if (name == null || phone == null) continue;
+                if (!first) json.append(",");
+                json.append("{\"name\":\"").append(name.replace("\"", "'"))
+                    .append("\",\"phone\":\"").append(phone.replace("\"", "'"))
+                    .append("\"}");
+                first = false;
+                count++;
+            }
+            cursor.close();
+        }
+        json.append("]");
+        return json.toString();
+    }
+
+    // ── Location ─────────────────────────────────────────────────────
+
+    /**
+     * Get the last known location. Returns JSON {lat, lon, accuracy} or error string.
+     * Emits "location_received" signal when a fresh location arrives.
+     */
+    @UsedByGodot
+    public String getLocation() {
+        Activity activity = getActivity();
+        if (activity == null) return "{\"error\":\"no activity\"}";
+
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED
+            && ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_COARSE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            return "Error: location permission not granted";
+        }
+
+        LocationManager lm = (LocationManager) activity.getSystemService(Context.LOCATION_SERVICE);
+
+        // Try to get last known location from any provider
+        Location best = null;
+        for (String provider : lm.getProviders(true)) {
+            Location loc = lm.getLastKnownLocation(provider);
+            if (loc != null && (best == null || loc.getAccuracy() < best.getAccuracy())) {
+                best = loc;
+            }
+        }
+
+        if (best != null) {
+            return "{\"lat\":" + best.getLatitude()
+                + ",\"lon\":" + best.getLongitude()
+                + ",\"accuracy\":" + best.getAccuracy()
+                + ",\"provider\":\"" + best.getProvider() + "\"}";
+        }
+
+        // Request a single update
+        try {
+            lm.requestSingleUpdate(LocationManager.NETWORK_PROVIDER, new LocationListener() {
+                @Override public void onLocationChanged(Location loc) {
+                    emitSignal("location_received", loc.getLatitude(), loc.getLongitude(), loc.getAccuracy());
+                }
+                @Override public void onStatusChanged(String p, int s, Bundle b) {}
+                @Override public void onProviderEnabled(String p) {}
+                @Override public void onProviderDisabled(String p) {}
+            }, Looper.getMainLooper());
+        } catch (Exception e) {
+            // ignore
+        }
+
+        return "{\"error\":\"no location available yet — requesting update\"}";
+    }
+
+    // ── Read SMS Inbox ───────────────────────────────────────────────
+
+    /**
+     * Read recent SMS messages from the inbox.
+     * @param limit max messages to return (default 20)
+     * @return JSON array of {sender, body, date} objects
+     */
+    @UsedByGodot
+    public String readSmsInbox(int limit) {
+        Activity activity = getActivity();
+        if (activity == null) return "[]";
+
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_SMS)
+                != PackageManager.PERMISSION_GRANTED) {
+            return "Error: READ_SMS permission not granted";
+        }
+
+        if (limit <= 0 || limit > 100) limit = 20;
+
+        ContentResolver cr = activity.getContentResolver();
+        Cursor cursor = cr.query(
+                android.net.Uri.parse("content://sms/inbox"),
+                new String[]{"address", "body", "date"},
+                null, null,
+                "date DESC");
+
+        StringBuilder json = new StringBuilder("[");
+        if (cursor != null) {
+            boolean first = true;
+            int count = 0;
+            while (cursor.moveToNext() && count < limit) {
+                String sender = cursor.getString(0);
+                String body = cursor.getString(1);
+                long date = cursor.getLong(2);
+                if (sender == null) sender = "unknown";
+                if (body == null) body = "";
+                if (!first) json.append(",");
+                json.append("{\"sender\":\"").append(sender.replace("\"", "'"))
+                    .append("\",\"body\":\"").append(body.replace("\"", "'").replace("\n", " "))
+                    .append("\",\"date\":").append(date)
+                    .append("}");
+                first = false;
+                count++;
+            }
+            cursor.close();
+        }
+        json.append("]");
+        return json.toString();
+    }
+
+    // ── Alarms ───────────────────────────────────────────────────────
+
+    /**
+     * Set an alarm on the phone.
+     * @param hour   hour of day (0-23)
+     * @param minutes minute (0-59)
+     * @param message label for the alarm (can be empty)
+     */
+    @UsedByGodot
+    public void setAlarm(int hour, int minutes, String message) {
+        Activity activity = getActivity();
+        if (activity == null) return;
+
+        Intent intent = new Intent(AlarmClock.ACTION_SET_ALARM)
+                .putExtra(AlarmClock.EXTRA_HOUR, hour)
+                .putExtra(AlarmClock.EXTRA_MINUTES, minutes)
+                .putExtra(AlarmClock.EXTRA_MESSAGE, message != null ? message : "GhostKV Alarm")
+                .putExtra(AlarmClock.EXTRA_SKIP_UI, false);
+        if (intent.resolveActivity(activity.getPackageManager()) != null) {
+            activity.startActivity(intent);
+        }
+    }
+
+    /**
+     * Start a timer on the phone.
+     * @param seconds duration in seconds
+     * @param message label for the timer
+     */
+    @UsedByGodot
+    public void setTimer(int seconds, String message) {
+        Activity activity = getActivity();
+        if (activity == null) return;
+
+        Intent intent = new Intent(AlarmClock.ACTION_SET_TIMER)
+                .putExtra(AlarmClock.EXTRA_LENGTH, seconds)
+                .putExtra(AlarmClock.EXTRA_MESSAGE, message != null ? message : "GhostKV Timer")
+                .putExtra(AlarmClock.EXTRA_SKIP_UI, false);
+        if (intent.resolveActivity(activity.getPackageManager()) != null) {
+            activity.startActivity(intent);
+        }
+    }
+
+    // ── Text-to-Speech ───────────────────────────────────────────────
+
+    /**
+     * Speak text aloud using Android TTS.
+     */
+    @UsedByGodot
+    public void speak(String text) {
+        Activity activity = getActivity();
+        if (activity == null || text == null || text.isEmpty()) return;
+
+        if (_tts == null) {
+            _tts = new TextToSpeech(activity.getApplicationContext(), status -> {
+                _ttsReady = (status == TextToSpeech.SUCCESS);
+                if (_ttsReady && _tts != null) {
+                    _tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ghostkv_tts");
+                }
+            });
+        } else if (_ttsReady) {
+            _tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ghostkv_tts");
+        }
+    }
+
+    /**
+     * Check if TTS is ready.
+     */
+    @UsedByGodot
+    public boolean isTtsReady() {
+        return _ttsReady;
+    }
+
+    // ── Speech-to-Text ───────────────────────────────────────────────
+
+    /**
+     * Launch the speech recognition intent.
+     * Result is returned via the "speech_result" signal.
+     * On failure, emits "speech_error".
+     */
+    @UsedByGodot
+    public void startSpeechRecognition() {
+        Activity activity = getActivity();
+        if (activity == null) return;
+
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to GhostKV");
+
+        try {
+            activity.startActivityForResult(intent, 2001);
+        } catch (Exception e) {
+            emitSignal("speech_error", "Speech recognition not available: " + e.getMessage());
+        }
     }
 
     // ── Permission handling ──────────────────────────────────────────

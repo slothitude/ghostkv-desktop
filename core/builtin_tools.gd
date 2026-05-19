@@ -30,6 +30,13 @@ func _register_tools() -> void:
 	td.register_tool("run_python", "builtin", self)
 	td.register_tool("toast", "builtin", self)
 	td.register_tool("vibrate", "builtin", self)
+	td.register_tool("get_contacts", "builtin", self)
+	td.register_tool("get_location", "builtin", self)
+	td.register_tool("read_sms", "builtin", self)
+	td.register_tool("set_alarm", "builtin", self)
+	td.register_tool("set_timer", "builtin", self)
+	td.register_tool("speak", "builtin", self)
+	td.register_tool("start_listening", "builtin", self)
 
 # ── Tool descriptions (used by ToolDispatch.build_tool_descriptions) ───────
 
@@ -57,6 +64,20 @@ func get_tool_description(tool_name: String) -> String:
 			return "Show a toast notification (Android only). Args: \"message\""
 		"vibrate":
 			return "Vibrate the device (Android only). Args: \"milliseconds\""
+		"get_contacts":
+			return "Search contacts by name. Returns JSON array of {name, phone}. Args: \"query\" (empty = all)"
+		"get_location":
+			return "Get the device GPS location. Returns JSON {lat, lon, accuracy}. Args: none"
+		"read_sms":
+			return "Read recent SMS messages from inbox. Returns JSON array of {sender, body, date}. Args: \"limit\" (default 20)"
+		"set_alarm":
+			return "Set an alarm. Args: \"hour\" (0-23), \"minutes\" (0-59), \"message\" (optional label)"
+		"set_timer":
+			return "Start a countdown timer. Args: \"seconds\", \"message\" (optional label)"
+		"speak":
+			return "Read text aloud using text-to-speech. Args: \"text\""
+		"start_listening":
+			return "Start speech recognition (voice input). Args: none"
 		_:
 			return ""
 
@@ -84,6 +105,20 @@ func get_tool_schema(tool_name: String) -> Dictionary:
 			return {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}
 		"vibrate":
 			return {"type": "object", "properties": {"milliseconds": {"type": "string"}}, "required": ["milliseconds"]}
+		"get_contacts":
+			return {"type": "object", "properties": {"query": {"type": "string"}}, "required": []}
+		"get_location":
+			return {"type": "object", "properties": {}}
+		"read_sms":
+			return {"type": "object", "properties": {"limit": {"type": "string"}}, "required": []}
+		"set_alarm":
+			return {"type": "object", "properties": {"hour": {"type": "string"}, "minutes": {"type": "string"}, "message": {"type": "string"}}, "required": ["hour", "minutes"]}
+		"set_timer":
+			return {"type": "object", "properties": {"seconds": {"type": "string"}, "message": {"type": "string"}}, "required": ["seconds"]}
+		"speak":
+			return {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+		"start_listening":
+			return {"type": "object", "properties": {}}
 		_:
 			return {}
 
@@ -113,6 +148,20 @@ func call_tool(tool_name: String, args: Dictionary) -> String:
 			return _tool_toast(args)
 		"vibrate":
 			return _tool_vibrate(args)
+		"get_contacts":
+			return _tool_get_contacts(args)
+		"get_location":
+			return _tool_get_location()
+		"read_sms":
+			return _tool_read_sms(args)
+		"set_alarm":
+			return _tool_set_alarm(args)
+		"set_timer":
+			return _tool_set_timer(args)
+		"speak":
+			return _tool_speak(args)
+		"start_listening":
+			return _tool_start_listening()
 		_:
 			return "Error: Unknown built-in tool '%s'" % tool_name
 
@@ -302,3 +351,74 @@ func _tool_vibrate(args: Dictionary) -> String:
 		OS.execute("cmd", ["vibrator", "vibrate", ms], [])
 		return "Vibrated for %s ms (shell)" % ms
 	return "Vibrate only available on Android"
+
+func _tool_get_contacts(args: Dictionary) -> String:
+	if _plugin:
+		var query: String = args.get("input", args.get("query", args.get("arg0", "")))
+		return _plugin.getContacts(query)
+	if OS.has_feature("android"):
+		var output: Array = []
+		var query: String = args.get("input", args.get("query", ""))
+		OS.execute("content", ["query", "--uri", "content://com.android.contacts/contacts", "--projection", "display_name"], output)
+		if output.size() > 0:
+			return output[0].strip_edges()
+		return "Error: could not read contacts"
+	return "Error: contacts only available on Android"
+
+func _tool_get_location() -> String:
+	if _plugin:
+		return _plugin.getLocation()
+	return "Error: location only available on Android with plugin"
+
+func _tool_read_sms(args: Dictionary) -> String:
+	if _plugin:
+		var limit: String = args.get("input", args.get("limit", args.get("arg0", "20")))
+		return _plugin.readSmsInbox(int(limit))
+	if OS.has_feature("android"):
+		var output: Array = []
+		OS.execute("content", ["query", "--uri", "content://sms/inbox", "--projection", "address:body:date", "--sort-order", "date DESC", "--limit", "20"], output)
+		if output.size() > 0:
+			return output[0].strip_edges()
+		return "Error: could not read SMS"
+	return "Error: read_sms only available on Android"
+
+func _tool_set_alarm(args: Dictionary) -> String:
+	var hour_str: String = args.get("hour", args.get("arg0", ""))
+	var min_str: String = args.get("minutes", args.get("minute", args.get("arg1", "0")))
+	var message: String = args.get("message", args.get("arg2", "GhostKV Alarm"))
+	if hour_str.is_empty():
+		return "Error: hour is required (0-23)"
+	if _plugin:
+		_plugin.setAlarm(int(hour_str), int(min_str), message)
+		return "Alarm set for %s:%s" % [hour_str, min_str]
+	if OS.has_feature("android"):
+		var output: Array = []
+		OS.execute("am", ["start", "-a", "android.intent.action.SET_ALARM",
+			"--ei", "android.intent.extra.alarm.HOUR", hour_str,
+			"--ei", "android.intent.extra.alarm.MINUTES", min_str,
+			"--es", "android.intent.extra.alarm.MESSAGE", message], output)
+		return "Alarm intent launched for %s:%s" % [hour_str, min_str]
+	return "Error: set_alarm only available on Android"
+
+func _tool_set_timer(args: Dictionary) -> String:
+	var seconds_str: String = args.get("seconds", args.get("arg0", "60"))
+	var message: String = args.get("message", args.get("arg1", "GhostKV Timer"))
+	if _plugin:
+		_plugin.setTimer(int(seconds_str), message)
+		return "Timer set for %s seconds" % seconds_str
+	return "Error: set_timer only available on Android with plugin"
+
+func _tool_speak(args: Dictionary) -> String:
+	var text: String = args.get("input", args.get("text", args.get("arg0", "")))
+	if text.is_empty():
+		return "Error: no text provided"
+	if _plugin:
+		_plugin.speak(text)
+		return "Speaking: %s" % text.left(50)
+	return "Error: TTS only available on Android with plugin"
+
+func _tool_start_listening() -> String:
+	if _plugin:
+		_plugin.startSpeechRecognition()
+		return "Listening... result will appear in chat"
+	return "Error: speech recognition only available on Android with plugin"
