@@ -15,15 +15,20 @@ func _ready() -> void:
 		dir.make_dir("sessions")
 
 func load_settings() -> Dictionary:
+	var defaults := _default_settings()
 	if FileAccess.file_exists(SETTINGS_PATH):
 		var f := FileAccess.open(SETTINGS_PATH, FileAccess.READ)
 		if f:
 			var json := JSON.new()
 			if json.parse(f.get_as_text()) == OK:
 				_settings = json.data
+				# Merge any missing keys from defaults (e.g. new settings added in updates)
+				for key in defaults:
+					if not _settings.has(key):
+						_settings[key] = defaults[key]
 				settings_loaded.emit(_settings)
 				return _settings
-	_settings = _default_settings()
+	_settings = defaults
 	settings_loaded.emit(_settings)
 	return _settings
 
@@ -80,8 +85,13 @@ func _default_settings() -> Dictionary:
 		"temperature": 0.8,
 		"max_tokens": 2048,
 		"max_steps": 10,
-		"system_prompt": "You are GhostKV, an AI assistant with access to tools. When you need information or want to take action, use the Action format.\n\nTo use a tool, write:\nAction: tool_name(\"arg1\", \"arg2\")\n\nThen stop. You will receive an Observation with the result.\nWhen you have the final answer, respond normally without Action.",
-		"mcp_servers": [],
+		"system_prompt": "You are GhostKV, an AI assistant with access to tools.\n\nWhen you need to use a tool, you MUST write EXACTLY this format on its own line:\nAction: tool_name(\"arg1\", \"arg2\")\n\nDo NOT just describe what you will do. You MUST output the Action: line directly. No explanations before it.\nExample: if the user asks for battery level, respond with:\nAction: get_battery()\n\nAfter the Action line, stop. You will receive an Observation with the result.\nWhen you have the final answer (no more tools needed), respond normally without Action.",
+		"mcp_servers": [{"name": "web-reader", "url": "http://192.168.0.33:8003/sse"}],
 		"trusted_contacts": {},
-		"auto_tts": false
+		"auto_tts": false,
+		"telegram_enabled": true,
+		"telegram_bot_token": "8735369358:AAGS42LeK97HlNFz3TA5SEe6YZdk-BhYLpY",
+		"telegram_chat_id": "5597932516",
+		"stt_api_url": "http://192.168.0.33:5000/v1/audio/transcriptions",
+		"memory_auto_recall": true
 	}

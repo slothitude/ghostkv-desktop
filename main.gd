@@ -8,7 +8,9 @@ var _tool_dispatch: Node
 var _react_loop: Node
 var _markdown: Node
 var _builtin_tools: Node
+var _memory_store: Node
 var _remote_api: Node
+var _telegram_bot: Node
 
 func _ready() -> void:
 	# Setup window
@@ -59,6 +61,13 @@ func _ready() -> void:
 	_tool_dispatch.name = "ToolDispatch"
 	add_child(_tool_dispatch)
 	Engine.register_singleton("ToolDispatch", _tool_dispatch)
+
+	# Memory store (graph memory)
+	_memory_store = Node.new()
+	_memory_store.set_script(load("res://core/memory_store.gd"))
+	_memory_store.name = "MemoryStore"
+	add_child(_memory_store)
+	Engine.register_singleton("MemoryStore", _memory_store)
 
 	# React loop
 	_react_loop = Node.new()
@@ -126,6 +135,13 @@ func _ready() -> void:
 	_remote_api.set_script(load("res://core/remote_api.gd"))
 	_remote_api.name = "RemoteAPI"
 	add_child(_remote_api)
+
+	# Telegram bot (long-poll getUpdates → ReactLoop → sendMessage back)
+	_telegram_bot = Node.new()
+	_telegram_bot.set_script(load("res://core/telegram_bot.gd"))
+	_telegram_bot.name = "TelegramBot"
+	add_child(_telegram_bot)
+	Engine.register_singleton("TelegramBot", _telegram_bot)
 
 func _on_close() -> void:
 	# Save window rect to settings

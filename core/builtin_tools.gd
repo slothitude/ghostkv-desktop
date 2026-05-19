@@ -6,6 +6,7 @@ extends Node
 var _plugin: RefCounted = null  # GhostKVPlugin singleton on Android
 var _confirm_dialog: Node = null  # Confirmation dialog overlay
 var _trusted_contacts: Dictionary = {}  # phone -> {"name": "...", "trust": "full"|"temp"}
+var _telegram_http: HTTPRequest  # For Telegram Bot API calls
 
 func _ready() -> void:
 	# On Android, the plugin is registered as a singleton by Godot's plugin loader
@@ -15,6 +16,9 @@ func _ready() -> void:
 			print("BuiltinTools: plugin loaded OK")
 		else:
 			push_error("BuiltinTools: FAILED to load GhostKVPlugin singleton")
+	# HTTPRequest node for Telegram Bot API
+	_telegram_http = HTTPRequest.new()
+	add_child(_telegram_http)
 	_register_tools()
 	_load_trusted_contacts()
 
@@ -119,6 +123,8 @@ func _register_tools() -> void:
 	td.register_tool("set_volume", "builtin", self)
 	td.register_tool("get_brightness", "builtin", self)
 	td.register_tool("set_brightness", "builtin", self)
+	td.register_tool("web_search", "builtin", self)
+	td.register_tool("web_read", "builtin", self)
 	td.register_tool("get_battery", "builtin", self)
 	td.register_tool("get_wifi_info", "builtin", self)
 	td.register_tool("wake_screen", "builtin", self)
@@ -130,6 +136,8 @@ func _register_tools() -> void:
 	td.register_tool("add_contact", "builtin", self)
 	td.register_tool("get_bluetooth_devices", "builtin", self)
 	td.register_tool("get_nfc_status", "builtin", self)
+	td.register_tool("send_whatsapp", "builtin", self)
+	td.register_tool("send_telegram", "builtin", self)
 
 # ── Tool descriptions (used by ToolDispatch.build_tool_descriptions) ───────
 
@@ -201,6 +209,10 @@ func get_tool_description(tool_name: String) -> String:
 			return "Get screen brightness (0-255)"
 		"set_brightness":
 			return "Set screen brightness. Args: \"brightness\" (0-255)"
+		"web_search":
+			return "Search the web using SearXNG. Args: \"query\""
+		"web_read":
+			return "Read a web page and return its text content. Args: \"url\""
 		"get_battery":
 			return "Get battery status: level, charging state, health, power source"
 		"get_wifi_info":
@@ -223,6 +235,10 @@ func get_tool_description(tool_name: String) -> String:
 			return "List paired Bluetooth devices"
 		"get_nfc_status":
 			return "Check if NFC is available and enabled"
+		"send_whatsapp":
+			return "Send a WhatsApp message (Android only). Opens WhatsApp with pre-filled text — user must tap Send. Args: \"phone\", \"message\""
+		"send_telegram":
+			return "Send a Telegram message via bot. Requires telegram_bot_token and telegram_chat_id in settings. Args: \"message\""
 		_:
 			return ""
 
@@ -316,6 +332,10 @@ func get_tool_schema(tool_name: String) -> Dictionary:
 			return {"type": "object", "properties": {}}
 		"get_nfc_status":
 			return {"type": "object", "properties": {}}
+		"send_whatsapp":
+			return {"type": "object", "properties": {"phone": {"type": "string"}, "message": {"type": "string"}}, "required": ["phone", "message"]}
+		"send_telegram":
+			return {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}
 		_:
 			return {}
 
@@ -389,6 +409,10 @@ func call_tool(tool_name: String, args: Dictionary) -> String:
 			return _tool_get_brightness()
 		"set_brightness":
 			return _tool_set_brightness(args)
+		"web_search":
+			return await _tool_web_search(args)
+		"web_read":
+			return await _tool_web_read(args)
 		"get_battery":
 			return _tool_get_battery()
 		"get_wifi_info":
@@ -411,6 +435,10 @@ func call_tool(tool_name: String, args: Dictionary) -> String:
 			return _tool_get_bluetooth_devices()
 		"get_nfc_status":
 			return _tool_get_nfc_status()
+		"send_whatsapp":
+			return _tool_send_whatsapp(args)
+		"send_telegram":
+			return await _tool_send_telegram(args)
 		_:
 			return "Error: Unknown built-in tool '%s'" % tool_name
 
@@ -964,3 +992,137 @@ func _tool_get_nfc_status() -> String:
 			return "NFC available but disabled"
 		return "NFC: %s" % result
 	return "Error: NFC only available on Android with plugin"
+
+# ── WhatsApp & Telegram ──────────────────────────────────────────────────
+
+func _tool_send_whatsapp(args: Dictionary) -> String:
+	var phone: String = args.get("phone", args.get("arg0", ""))
+	var message: String = args.get("message", args.get("arg1", ""))
+	if phone.is_empty() or message.is_empty():
+		return "Error: phone and message are required"
+	if _plugin:
+		var ok: bool = _plugin.sendWhatsApp(phone, message)
+		if ok:
+			return "WhatsApp opened for %s with message pre-filled. User must tap Send." % phone
+		else:
+			return "Error: WhatsApp is not installed on this device"
+	if OS.has_feature("android"):
+		# Shell fallback
+		var output: Array = []
+		OS.execute("am", ["start", "-a", "android.intent.action.SENDTO",
+			"-d", "smsto:%s" % phone,
+			"--es", "sms_body", message,
+			"-p", "com.whatsapp"], output)
+		return "WhatsApp intent launched for %s (shell fallback)" % phone
+	return "Error: WhatsApp only available on Android"
+
+func _tool_send_telegram(args: Dictionary) -> String:
+	var message: String = args.get("message", args.get("arg0", ""))
+	if message.is_empty():
+		return "Error: message is required"
+	# Read Telegram settings from session
+	var session := Engine.get_singleton("SessionManager") as Node
+	if not session:
+		return "Error: SessionManager not available"
+	var settings: Dictionary = session.load_settings()
+	var bot_token: String = settings.get("telegram_bot_token", "")
+	var chat_id: String = settings.get("telegram_chat_id", "")
+	if bot_token.is_empty() or chat_id.is_empty():
+		return "Error: Telegram not configured. Set telegram_bot_token and telegram_chat_id in settings."
+	# Send via Telegram Bot API
+	var url := "https://api.telegram.org/bot%s/sendMessage" % bot_token
+	var headers := ["Content-Type: application/json"]
+	var body := JSON.stringify({"chat_id": chat_id, "text": message})
+	var err := _telegram_http.request(url, headers, HTTPClient.METHOD_POST, body)
+	if err != OK:
+		return "Error: Telegram request failed: %s" % error_string(err)
+	# Wait for response
+	var response: Array = await _telegram_http.request_completed
+	var result: int = response[0]
+	var code: int = response[1]
+	var resp_body: PackedByteArray = response[3]
+	if result != HTTPRequest.RESULT_SUCCESS:
+		return "Error: Telegram request failed (result=%d)" % result
+	if code != 200:
+		return "Error: Telegram API returned %d: %s" % [code, resp_body.get_string_from_utf8().left(200)]
+	var json := JSON.new()
+	var body_text := resp_body.get_string_from_utf8()
+	if json.parse(body_text) == OK:
+		var data: Dictionary = json.data
+		if data.get("ok", false):
+			var msg_data: Dictionary = data.get("result", {})
+			return "Telegram message sent (msg_id: %d)" % msg_data.get("message_id", 0)
+		else:
+			return "Error: Telegram API error: %s" % data.get("description", "unknown")
+	return "Telegram message sent"
+
+# ── Web tools (SearXNG + web-reader) ────────────────────────────────────────
+
+var _web_http: HTTPRequest
+
+func _get_web_http() -> HTTPRequest:
+	if not _web_http:
+		_web_http = HTTPRequest.new()
+		add_child(_web_http)
+	return _web_http
+
+func _tool_web_search(args: Dictionary) -> String:
+	var query: String = args.get("query", args.get("input", args.get("arg0", "")))
+	if query.is_empty():
+		return "Error: web_search requires a query"
+
+	var http := _get_web_http()
+	var searx_url := "http://192.168.0.33:8888/search?q=%s&format=json&categories=general&language=en" % query.uri_encode()
+	var err := http.request(searx_url, [], HTTPClient.METHOD_GET)
+	if err != OK:
+		return "Error: Failed to send search request"
+
+	var response: Array = await http.request_completed
+	var result: int = response[0]
+	var code: int = response[1]
+	var body: PackedByteArray = response[3]
+
+	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
+		return "Error: Search request failed (%d)" % code
+
+	var json := JSON.new()
+	if json.parse(body.get_string_from_utf8()) != OK:
+		return "Error: Invalid JSON response"
+
+	var data: Dictionary = json.data
+	var results: Array = data.get("results", [])
+	if results.is_empty():
+		return "No results found for '%s'" % query
+
+	var lines: PackedStringArray = []
+	var count := mini(results.size(), 5)
+	for i in count:
+		var r: Dictionary = results[i]
+		lines.append("%d. %s\n   %s\n   URL: %s" % [i + 1, r.get("title", ""), r.get("content", "").left(200), r.get("url", "")])
+	return "Search results for '%s':\n\n%s" % [query, "\n\n".join(lines)]
+
+func _tool_web_read(args: Dictionary) -> String:
+	var url: String = args.get("url", args.get("input", args.get("arg0", "")))
+	if url.is_empty():
+		return "Error: web_read requires a URL"
+
+	var http := _get_web_http()
+	# Use web-reader MCP server's reader endpoint directly
+	var reader_url := "http://192.168.0.33:8003/read?url=%s" % url.uri_encode()
+	var err := http.request(reader_url, [], HTTPClient.METHOD_GET)
+	if err != OK:
+		return "Error: Failed to send read request"
+
+	var response: Array = await http.request_completed
+	var result: int = response[0]
+	var code: int = response[1]
+	var body: PackedByteArray = response[3]
+
+	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
+		return "Error: Read request failed (%d)" % code
+
+	var text := body.get_string_from_utf8()
+	# Truncate to ~4000 chars to avoid overwhelming the LLM context
+	if text.length() > 4000:
+		text = text.left(4000) + "\n\n[Content truncated at 4000 chars]"
+	return text

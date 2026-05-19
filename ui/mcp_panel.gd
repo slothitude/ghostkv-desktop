@@ -7,6 +7,7 @@ var _server_list: ItemList
 var _session_mgr: Node
 var _tool_dispatch: Node
 var _mcp_clients: Dictionary = {}  # server_name -> MCPClient node
+var _initial_load_done := false
 
 func _ready() -> void:
 	_session_mgr = Engine.get_singleton("SessionManager")
@@ -53,6 +54,10 @@ func _ready() -> void:
 
 	# Auto-load saved MCP servers
 	_session_mgr.settings_loaded.connect(_on_settings_loaded)
+	# Settings are already loaded by main.gd before UI is created
+	# Call _load_servers directly with merged defaults
+	if _session_mgr.has_method("load_settings"):
+		_load_servers()
 
 func _on_connect() -> void:
 	var server_name := _name_input.text.strip_edges()
@@ -131,12 +136,36 @@ func _on_status_changed(status: String, server_name: String) -> void:
 					_server_list.set_item_text(i, "%s (%s)" % [server_name, status])
 			break
 
-func _on_settings_loaded(settings: Dictionary) -> void:
+func _on_settings_loaded(_settings: Dictionary) -> void:
+	if _initial_load_done:
+		return
+	_load_servers()
+
+func _load_servers() -> void:
+	_initial_load_done = true
+
+	var settings: Dictionary = _session_mgr.load_settings()
 	var servers: Array = settings.get("mcp_servers", [])
+	print("McpPanel: _load_servers, saved=%s" % str(servers))
+
+	# Merge default MCP servers (from _default_settings) that aren't already in the saved list
+	var session := Engine.get_singleton("SessionManager") as Node
+	if session and session.has_method("_default_settings"):
+		var defaults: Dictionary = session._default_settings()
+		var default_servers: Array = defaults.get("mcp_servers", [])
+		print("McpPanel: default_servers=%s" % str(default_servers))
+		var existing_names: PackedStringArray = []
+		for s in servers:
+			existing_names.append(s.get("name", ""))
+		for ds in default_servers:
+			if ds.get("name", "") not in existing_names:
+				servers.append(ds)
+
 	for server in servers:
 		var s_name: String = server.get("name", "")
 		var s_url: String = server.get("url", "")
 		if not s_name.is_empty() and not s_url.is_empty():
+			print("McpPanel: connecting %s at %s" % [s_name, s_url])
 			_connect_server(s_name, s_url)
 
 func _save_mcp_servers() -> void:

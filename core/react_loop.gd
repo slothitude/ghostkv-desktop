@@ -21,6 +21,8 @@ var _system_prompt: String = ""
 var _running: bool = false
 
 var _action_regex: RegEx
+var _tool_call_regex: RegEx
+var _reasoning_tool_regex: RegEx
 
 # Streaming accumulation
 var _stream_text_buffer: String = ""
@@ -29,6 +31,11 @@ var _stream_connected: bool = false
 func _ready() -> void:
 	_action_regex = RegEx.new()
 	_action_regex.compile("Action:\\s*(\\w+)\\((.*)\\)")
+	_tool_call_regex = RegEx.new()
+	_tool_call_regex.compile("<tool_call[^>]*>\\s*(\\w+)\\((.*?)\\)\\s*</tool_call\\s*>")
+	# Fallback: catch "use the get_battery tool" or "I'll use get_location" from reasoning
+	_reasoning_tool_regex = RegEx.new()
+	_reasoning_tool_regex.compile("(?:use|using|call|invoke)\\s+(?:the\\s+)?(\\w+)\\s+tool")
 
 func configure(api_client: Node, tool_dispatch: Node, max_steps: int, temperature: float, max_tokens: int, system_prompt: String) -> void:
 	_api_client = api_client
@@ -54,6 +61,13 @@ func run(question: String, history: Array = []) -> void:
 		if not tool_desc.is_empty():
 			full_prompt += "\n\nAvailable tools:\n" + tool_desc
 			print("ReactLoop: injected %d tool descriptions into system prompt" % tool_desc.split("\n").size())
+
+	# Inject memory context (auto-recall)
+	var memory_store := Engine.get_singleton("MemoryStore") as Node
+	if memory_store and memory_store.has_method("auto_recall"):
+		var mem_ctx: String = memory_store.auto_recall(question)
+		if not mem_ctx.is_empty():
+			full_prompt += "\n\n" + mem_ctx
 
 	# Remove any existing system message and insert fresh one
 	for i in range(_messages.size() - 1, -1, -1):
@@ -108,11 +122,29 @@ func _on_response(text: String, usage: Dictionary) -> void:
 	if _stream_text_buffer.length() > 0:
 		response_text = _stream_text_buffer
 
-	# Check for Action: in response
+	# Check for Action: format or GLM <tool_call/> format
 	var action_match := _action_regex.search(response_text)
+	var tool_name: String = ""
+	var args_str: String = ""
+
 	if action_match:
-		var tool_name: String = action_match.get_string(1)
-		var args_str: String = action_match.get_string(2)
+		tool_name = action_match.get_string(1)
+		args_str = action_match.get_string(2)
+	else:
+		# Try GLM-5.1 native tool call format
+		action_match = _tool_call_regex.search(response_text)
+		if action_match:
+			tool_name = action_match.get_string(1)
+			args_str = action_match.get_string(2)
+		else:
+			# Fallback: extract tool name from reasoning ("I'll use the get_battery tool")
+			var reasoning_match := _reasoning_tool_regex.search(response_text)
+			if reasoning_match:
+				tool_name = reasoning_match.get_string(1)
+				args_str = ""
+				print("ReactLoop: extracted tool '%s' from reasoning" % tool_name)
+
+	if tool_name != "":
 
 		thought_generated.emit(response_text)
 		tool_called.emit(tool_name, args_str)
