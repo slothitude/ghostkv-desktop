@@ -79,6 +79,8 @@ func _deactivate_voice_mode() -> void:
 		_plugin.stopSpeaking()
 	_is_speaking = false
 	speaking_changed.emit(false)
+
+func barge_in() -> void:
 	if not _voice_mode or not _plugin:
 		return
 	if _plugin.isSpeaking():
