@@ -37,6 +37,14 @@ func _register_tools() -> void:
 	td.register_tool("set_timer", "builtin", self)
 	td.register_tool("speak", "builtin", self)
 	td.register_tool("start_listening", "builtin", self)
+	td.register_tool("make_call", "builtin", self)
+	td.register_tool("get_call_log", "builtin", self)
+	td.register_tool("get_calendar_events", "builtin", self)
+	td.register_tool("create_calendar_event", "builtin", self)
+	td.register_tool("read_clipboard", "builtin", self)
+	td.register_tool("write_clipboard", "builtin", self)
+	td.register_tool("toggle_flashlight", "builtin", self)
+	td.register_tool("get_notifications", "builtin", self)
 
 # ── Tool descriptions (used by ToolDispatch.build_tool_descriptions) ───────
 
@@ -78,6 +86,22 @@ func get_tool_description(tool_name: String) -> String:
 			return "Read text aloud using text-to-speech. Args: \"text\""
 		"start_listening":
 			return "Start speech recognition (voice input). Args: none"
+		"make_call":
+			return "Make a phone call (Android only). Args: \"phone\""
+		"get_call_log":
+			return "Read recent call history. Returns JSON array of {number, name, date, duration, type}. Args: \"limit\" (default 20)"
+		"get_calendar_events":
+			return "Read calendar events. Returns JSON array of {title, start, end, location, description}. Args: \"limit\" (default 20)"
+		"create_calendar_event":
+			return "Create a calendar event. Args: \"title\", \"description\", \"start_ms\" (epoch ms), \"end_ms\" (epoch ms)"
+		"read_clipboard":
+			return "Read text from clipboard. Args: none"
+		"write_clipboard":
+			return "Write text to clipboard. Args: \"text\""
+		"toggle_flashlight":
+			return "Toggle flashlight on/off. Args: \"on\" (\"true\" or \"false\")"
+		"get_notifications":
+			return "Read active notifications. Returns JSON array of {app, title, text}. Requires notification access permission."
 		_:
 			return ""
 
@@ -118,6 +142,22 @@ func get_tool_schema(tool_name: String) -> Dictionary:
 		"speak":
 			return {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
 		"start_listening":
+			return {"type": "object", "properties": {}}
+		"make_call":
+			return {"type": "object", "properties": {"phone": {"type": "string"}}, "required": ["phone"]}
+		"get_call_log":
+			return {"type": "object", "properties": {"limit": {"type": "string"}}, "required": []}
+		"get_calendar_events":
+			return {"type": "object", "properties": {"limit": {"type": "string"}}, "required": []}
+		"create_calendar_event":
+			return {"type": "object", "properties": {"title": {"type": "string"}, "description": {"type": "string"}, "start_ms": {"type": "string"}, "end_ms": {"type": "string"}}, "required": ["title", "start_ms", "end_ms"]}
+		"read_clipboard":
+			return {"type": "object", "properties": {}}
+		"write_clipboard":
+			return {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+		"toggle_flashlight":
+			return {"type": "object", "properties": {"on": {"type": "string"}}, "required": ["on"]}
+		"get_notifications":
 			return {"type": "object", "properties": {}}
 		_:
 			return {}
@@ -162,6 +202,22 @@ func call_tool(tool_name: String, args: Dictionary) -> String:
 			return _tool_speak(args)
 		"start_listening":
 			return _tool_start_listening()
+		"make_call":
+			return _tool_make_call(args)
+		"get_call_log":
+			return _tool_get_call_log(args)
+		"get_calendar_events":
+			return _tool_get_calendar_events(args)
+		"create_calendar_event":
+			return _tool_create_calendar_event(args)
+		"read_clipboard":
+			return _tool_read_clipboard()
+		"write_clipboard":
+			return _tool_write_clipboard(args)
+		"toggle_flashlight":
+			return _tool_toggle_flashlight(args)
+		"get_notifications":
+			return _tool_get_notifications()
 		_:
 			return "Error: Unknown built-in tool '%s'" % tool_name
 
@@ -422,3 +478,71 @@ func _tool_start_listening() -> String:
 		_plugin.startSpeechRecognition()
 		return "Listening... result will appear in chat"
 	return "Error: speech recognition only available on Android with plugin"
+
+# ── Phone, Calendar, Clipboard, Flashlight, Notifications ──────────────────
+
+func _tool_make_call(args: Dictionary) -> String:
+	var phone: String = args.get("input", args.get("phone", args.get("arg0", "")))
+	if phone.is_empty():
+		return "Error: no phone number provided"
+	if _plugin:
+		_plugin.makeCall(phone)
+		return "Calling %s" % phone
+	if OS.has_feature("android"):
+		var output: Array = []
+		OS.execute("am", ["start", "-a", "android.intent.action.DIAL", "-d", "tel:%s" % phone], output)
+		return "Dialing %s" % phone
+	return "Error: calling only available on Android"
+
+func _tool_get_call_log(args: Dictionary) -> String:
+	var limit: String = args.get("input", args.get("limit", args.get("arg0", "20")))
+	if _plugin:
+		return _plugin.getCallLog(int(limit))
+	return "Error: call log only available on Android with plugin"
+
+func _tool_get_calendar_events(args: Dictionary) -> String:
+	var limit: String = args.get("input", args.get("limit", args.get("arg0", "20")))
+	if _plugin:
+		return _plugin.getCalendarEvents(int(limit))
+	return "Error: calendar only available on Android with plugin"
+
+func _tool_create_calendar_event(args: Dictionary) -> String:
+	var title: String = args.get("title", args.get("arg0", ""))
+	var desc: String = args.get("description", args.get("arg1", ""))
+	var start_ms: String = args.get("start_ms", args.get("arg2", ""))
+	var end_ms: String = args.get("end_ms", args.get("arg3", ""))
+	if title.is_empty() or start_ms.is_empty() or end_ms.is_empty():
+		return "Error: title, start_ms, and end_ms are required"
+	if _plugin:
+		return _plugin.createCalendarEvent(title, desc, int(start_ms), int(end_ms))
+	return "Error: calendar only available on Android with plugin"
+
+func _tool_read_clipboard() -> String:
+	if _plugin:
+		var text: String = _plugin.readClipboard()
+		if text.is_empty():
+			return "Clipboard is empty"
+		return text
+	return "Error: clipboard only available on Android with plugin"
+
+func _tool_write_clipboard(args: Dictionary) -> String:
+	var text: String = args.get("input", args.get("text", args.get("arg0", "")))
+	if text.is_empty():
+		return "Error: no text provided"
+	if _plugin:
+		_plugin.writeClipboard(text)
+		return "Copied to clipboard"
+	return "Error: clipboard only available on Android with plugin"
+
+func _tool_toggle_flashlight(args: Dictionary) -> String:
+	var on_str: String = args.get("input", args.get("on", args.get("arg0", "true")))
+	var on: bool = on_str == "true" or on_str == "1"
+	if _plugin:
+		_plugin.setFlashlight(on)
+		return "Flashlight %s" % ("on" if on else "off")
+	return "Error: flashlight only available on Android with plugin"
+
+func _tool_get_notifications() -> String:
+	if _plugin:
+		return _plugin.getNotifications()
+	return "Error: notifications only available on Android with plugin"

@@ -52,12 +52,47 @@ Master roadmap: `C:\Users\aaron\Desktop\dev\ghostkv\ROADMAP.md` (v1.1.0 section)
 - [x] Tool dispatch — handles builtin + MCP tools, schema + descriptions for all
 - [x] Android permissions — SEND_SMS, CAMERA, VIBRATE in export_presets.cfg
 
+- [x] Android plugin — GhostKVPlugin.java compiled to .aar, working on device
+- [x] Android build — Gradle build, JDK 17, debug keystore, plugin enabled in export_presets.cfg
+- [x] 19 built-in tools — open_url, run_command, file_read, calculator, send_sms, open_camera, open_app, list_apps, run_python, toast, vibrate, get_contacts, get_location, read_sms, set_alarm, set_timer, speak, start_listening
+- [x] Git repo — slothitude/ghostkv-desktop on GitHub
+
 ## Next Up
 
-### Android Plugin Build
-- [ ] Compile GhostKVPlugin.java → .aar
-- [ ] Configure plugin in project.godot (android_plugin)
-- [ ] Test on Android device
+### New Android Plugin Tools — High Value
+- [ ] **Make phone call** — `Intent.ACTION_CALL` with `CALL_PHONE` permission
+- [ ] **Call log** — read recent calls (who, when, duration) via `CallLog.Calls`
+- [ ] **Calendar** — read upcoming events, create new ones via `CalendarContract`
+- [ ] **Notifications** — read/manage notifications via `NotificationListenerService` (separate permission)
+- [ ] **Clipboard** — read/write clipboard content via `ClipboardManager`
+- [ ] **Flashlight** — toggle camera flash via `CameraManager.setTorchMode()`
+
+### New Android Plugin Tools — Medium Value
+- [ ] **Media control** — play/pause/skip via `MediaSessionManager`
+- [ ] **Volume control** — adjust media/ring/alarm volume via `AudioManager`
+- [ ] **Brightness control** — get/set screen brightness via `Settings.System`
+- [ ] **Battery status** — level, charging state, health via `BatteryManager` / sticky `ACTION_BATTERY_CHANGED` intent
+- [ ] **WiFi info** — current network name, IP, signal strength via `WifiManager`
+- [ ] **Screen control** — wake screen, lock, set timeout via `PowerManager` / `DevicePolicyManager`
+- [ ] **Share intent** — send text/content to other apps via `ACTION_SEND`
+
+### New Android Plugin Tools — Nice to Have
+- [ ] **Write file** — save content to Downloads or app-specific storage
+- [ ] **List directory** — browse filesystem, list files and folders
+- [ ] **Screenshot** — capture screen via `MediaProjection` API (needs user confirmation)
+- [ ] **Contact management** — add/edit/delete contacts via `ContactsContract` write operations
+- [ ] **Bluetooth** — list paired devices, connect/disconnect via `BluetoothManager`
+- [ ] **NFC** — read NFC tags via `NfcAdapter`
+
+### Voice & Live Chat
+- [ ] **Voice input button** — mic button in input bar, taps to start STT, transcribes to text field
+- [ ] **Auto-TTS toggle** — setting to automatically speak every assistant response aloud
+- [ ] **Live voice chat mode** — continuous STT → LLM → TTS conversation loop: listen → send → stream response → speak → listen again, hands-free
+- [ ] **Voice activity detection** — detect silence to auto-stop listening and send
+- [ ] **Interrupt TTS** — stop speaking when user starts talking (barge-in)
+- [ ] **Listening indicator** — animated waveform or pulsing mic while STT is active
+- [ ] **STT continuous mode** — keep listening after response completes for back-and-forth chat
+- [ ] **Voice chat UI** — floating mic button overlay, voice mode toggle in toolbar
 
 ### Export
 - [ ] Windows .exe build

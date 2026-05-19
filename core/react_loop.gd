@@ -54,7 +54,12 @@ func run(question: String, history: Array = []) -> void:
 			has_system = true
 			break
 	if not has_system and _system_prompt != "":
-		_messages.insert(0, {"role": "system", "content": _system_prompt})
+		var full_prompt := _system_prompt
+		if _tool_dispatch and _tool_dispatch.has_method("build_tool_descriptions"):
+			var tool_desc: String = _tool_dispatch.build_tool_descriptions()
+			if not tool_desc.is_empty():
+				full_prompt += "\n\nAvailable tools:\n" + tool_desc
+		_messages.insert(0, {"role": "system", "content": full_prompt})
 
 	_do_step()
 

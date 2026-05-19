@@ -4,11 +4,16 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlarmManager;
 import android.app.PendingIntent;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraManager;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
@@ -20,6 +25,8 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
 import android.provider.AlarmClock;
+import android.provider.CalendarContract;
+import android.provider.CallLog;
 import android.provider.ContactsContract;
 import android.provider.MediaStore;
 import android.speech.RecognizerIntent;
@@ -55,6 +62,7 @@ public class GhostKVPlugin extends GodotPlugin {
     private String pendingSmsMessage = "";
     private TextToSpeech _tts;
     private boolean _ttsReady = false;
+    private boolean _flashlightOn = false;
 
     public GhostKVPlugin(Godot godot) {
         super(godot);
@@ -580,6 +588,251 @@ public class GhostKVPlugin extends GodotPlugin {
         } catch (Exception e) {
             emitSignal("speech_error", "Speech recognition not available: " + e.getMessage());
         }
+    }
+
+    // ── Phone Calls ──────────────────────────────────────────────────
+
+    @UsedByGodot
+    public void makeCall(String phone) {
+        Activity activity = getActivity();
+        if (activity == null) return;
+
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.CALL_PHONE)
+                == PackageManager.PERMISSION_GRANTED) {
+            Intent intent = new Intent(Intent.ACTION_CALL, android.net.Uri.parse("tel:" + phone));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            activity.startActivity(intent);
+        } else {
+            // Fallback: open dialer
+            Intent intent = new Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:" + phone));
+            activity.startActivity(intent);
+        }
+    }
+
+    // ── Call Log ─────────────────────────────────────────────────────
+
+    @UsedByGodot
+    public String getCallLog(int limit) {
+        Activity activity = getActivity();
+        if (activity == null) return "[]";
+
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CALL_LOG)
+                != PackageManager.PERMISSION_GRANTED) {
+            return "Error: READ_CALL_LOG permission not granted";
+        }
+
+        if (limit <= 0 || limit > 100) limit = 20;
+
+        ContentResolver cr = activity.getContentResolver();
+        Cursor cursor = cr.query(
+                CallLog.Calls.CONTENT_URI,
+                new String[]{CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME,
+                        CallLog.Calls.DATE, CallLog.Calls.DURATION, CallLog.Calls.TYPE},
+                null, null, CallLog.Calls.DATE + " DESC");
+
+        StringBuilder json = new StringBuilder("[");
+        if (cursor != null) {
+            boolean first = true;
+            int count = 0;
+            while (cursor.moveToNext() && count < limit) {
+                String number = cursor.getString(0);
+                String name = cursor.getString(1);
+                long date = cursor.getLong(2);
+                String duration = cursor.getString(3);
+                int type = cursor.getInt(4);
+
+                String typeStr;
+                switch (type) {
+                    case CallLog.Calls.INCOMING_TYPE: typeStr = "incoming"; break;
+                    case CallLog.Calls.OUTGOING_TYPE: typeStr = "outgoing"; break;
+                    case CallLog.Calls.MISSED_TYPE: typeStr = "missed"; break;
+                    case CallLog.Calls.REJECTED_TYPE: typeStr = "rejected"; break;
+                    case CallLog.Calls.BLOCKED_TYPE: typeStr = "blocked"; break;
+                    default: typeStr = "unknown";
+                }
+
+                if (!first) json.append(",");
+                json.append("{\"number\":\"").append(number != null ? number : "unknown")
+                    .append("\",\"name\":\"").append(name != null ? name.replace("\"", "'") : "")
+                    .append("\",\"date\":").append(date)
+                    .append(",\"duration\":").append(duration != null ? duration : "0")
+                    .append(",\"type\":\"").append(typeStr)
+                    .append("\"}");
+                first = false;
+                count++;
+            }
+            cursor.close();
+        }
+        json.append("]");
+        return json.toString();
+    }
+
+    // ── Calendar ─────────────────────────────────────────────────────
+
+    @UsedByGodot
+    public String getCalendarEvents(int limit) {
+        Activity activity = getActivity();
+        if (activity == null) return "[]";
+
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CALENDAR)
+                != PackageManager.PERMISSION_GRANTED) {
+            return "Error: READ_CALENDAR permission not granted";
+        }
+
+        if (limit <= 0 || limit > 100) limit = 20;
+
+        ContentResolver cr = activity.getContentResolver();
+        Cursor cursor = cr.query(
+                CalendarContract.Events.CONTENT_URI,
+                new String[]{CalendarContract.Events.TITLE, CalendarContract.Events.DTSTART,
+                        CalendarContract.Events.DTEND, CalendarContract.Events.EVENT_LOCATION,
+                        CalendarContract.Events.DESCRIPTION},
+                null, null, CalendarContract.Events.DTSTART + " DESC");
+
+        StringBuilder json = new StringBuilder("[");
+        if (cursor != null) {
+            boolean first = true;
+            int count = 0;
+            while (cursor.moveToNext() && count < limit) {
+                String title = cursor.getString(0);
+                long dtStart = cursor.getLong(1);
+                long dtEnd = cursor.getLong(2);
+                String location = cursor.getString(3);
+                String description = cursor.getString(4);
+
+                if (!first) json.append(",");
+                json.append("{\"title\":\"").append(title != null ? title.replace("\"", "'") : "")
+                    .append("\",\"start\":").append(dtStart)
+                    .append(",\"end\":").append(dtEnd)
+                    .append(",\"location\":\"").append(location != null ? location.replace("\"", "'") : "")
+                    .append("\",\"description\":\"").append(description != null ? description.replace("\"", "'").replace("\n", " ") : "")
+                    .append("\"}");
+                first = false;
+                count++;
+            }
+            cursor.close();
+        }
+        json.append("]");
+        return json.toString();
+    }
+
+    @UsedByGodot
+    public String createCalendarEvent(String title, String description, long startMs, long endMs) {
+        Activity activity = getActivity();
+        if (activity == null) return "Error: no activity";
+
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.WRITE_CALENDAR)
+                != PackageManager.PERMISSION_GRANTED) {
+            return "Error: WRITE_CALENDAR permission not granted";
+        }
+
+        ContentResolver cr = activity.getContentResolver();
+        ContentValues values = new ContentValues();
+        values.put(CalendarContract.Events.DTSTART, startMs);
+        values.put(CalendarContract.Events.DTEND, endMs);
+        values.put(CalendarContract.Events.TITLE, title);
+        values.put(CalendarContract.Events.DESCRIPTION, description != null ? description : "");
+        values.put(CalendarContract.Events.CALENDAR_ID, _getDefaultCalendarId(cr));
+        values.put(CalendarContract.Events.EVENT_TIMEZONE, java.util.TimeZone.getDefault().getID());
+
+        android.net.Uri uri = cr.insert(CalendarContract.Events.CONTENT_URI, values);
+        if (uri != null) {
+            return "Event created: " + title;
+        }
+        return "Error: failed to create event";
+    }
+
+    private long _getDefaultCalendarId(ContentResolver cr) {
+        String[] projection = new String[]{CalendarContract.Calendars._ID};
+        Cursor cursor = cr.query(CalendarContract.Calendars.CONTENT_URI, projection, null, null, null);
+        if (cursor != null) {
+            if (cursor.moveToFirst()) {
+                long id = cursor.getLong(0);
+                cursor.close();
+                return id;
+            }
+            cursor.close();
+        }
+        return 1;
+    }
+
+    // ── Clipboard ────────────────────────────────────────────────────
+
+    @UsedByGodot
+    public String readClipboard() {
+        Activity activity = getActivity();
+        if (activity == null) return "";
+
+        ClipboardManager cm = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+        if (cm != null && cm.hasPrimaryClip()) {
+            ClipData.Item item = cm.getPrimaryClip().getItemAt(0);
+            if (item != null && item.getText() != null) {
+                return item.getText().toString();
+            }
+        }
+        return "";
+    }
+
+    @UsedByGodot
+    public void writeClipboard(String text) {
+        Activity activity = getActivity();
+        if (activity == null) return;
+
+        ClipboardManager cm = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+        if (cm != null) {
+            ClipData clip = ClipData.newPlainText("text", text);
+            cm.setPrimaryClip(clip);
+        }
+    }
+
+    // ── Flashlight ───────────────────────────────────────────────────
+
+    @UsedByGodot
+    public void setFlashlight(boolean on) {
+        Activity activity = getActivity();
+        if (activity == null) return;
+
+        CameraManager cameraManager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
+        if (cameraManager == null) return;
+
+        try {
+            for (String cameraId : cameraManager.getCameraIdList()) {
+                CameraCharacteristics chars = cameraManager.getCameraCharacteristics(cameraId);
+                Boolean hasFlash = chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
+                Integer facing = chars.get(CameraCharacteristics.LENS_FACING);
+                if (hasFlash != null && hasFlash && facing != null
+                        && facing == CameraCharacteristics.LENS_FACING_BACK) {
+                    cameraManager.setTorchMode(cameraId, on);
+                    _flashlightOn = on;
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+    }
+
+    @UsedByGodot
+    public boolean isFlashlightOn() {
+        return _flashlightOn;
+    }
+
+    // ── Notifications ────────────────────────────────────────────────
+
+    @UsedByGodot
+    public String getNotifications() {
+        if (!GhostKVNotificationListener.isConnected()) {
+            return "Error: notification access not granted. Open Settings > Apps > GhostKV > Notification access";
+        }
+        return GhostKVNotificationListener.getCachedNotificationsJson();
+    }
+
+    @UsedByGodot
+    public void openNotificationSettings() {
+        Activity activity = getActivity();
+        if (activity == null) return;
+        Intent intent = new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS");
+        activity.startActivity(intent);
     }
 
     // ── Permission handling ──────────────────────────────────────────
