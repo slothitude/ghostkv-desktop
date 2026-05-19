@@ -186,12 +186,13 @@ public class GhostKVPlugin extends GodotPlugin {
                 smsManager = SmsManager.getDefault();
             }
 
-            // Split long messages
-            if (message.length() > 160) {
-                java.util.ArrayList<String> parts = smsManager.divideMessage(message);
+            // Always use divideMessage — it handles both GSM-7 (160 char)
+            // and UCS-2 (70 char for emoji/unicode) encoding limits correctly
+            java.util.ArrayList<String> parts = smsManager.divideMessage(message);
+            if (parts.size() > 1) {
                 smsManager.sendMultipartTextMessage(phone, null, parts, null, null);
             } else {
-                smsManager.sendTextMessage(phone, null, message, null, null);
+                smsManager.sendTextMessage(phone, null, parts.get(0), null, null);
             }
             emitSignal("sms_sent", phone);
         } catch (Exception e) {
