@@ -131,6 +131,8 @@ public class GhostKVPlugin extends GodotPlugin implements GhostTelephony.Telepho
         signals.add(new SignalInfo("on_incoming_call", String.class));
         signals.add(new SignalInfo("on_call_started", String.class));
         signals.add(new SignalInfo("on_call_ended", String.class));
+        signals.add(new SignalInfo("on_call_state_changed", String.class));
+        signals.add(new SignalInfo("on_audio_route_changed", String.class));
         return signals;
     }
 
@@ -882,6 +884,41 @@ public class GhostKVPlugin extends GodotPlugin implements GhostTelephony.Telepho
     @UsedByGodot
     public void requestDefaultDialer() {
         if (_telephony != null) _telephony.requestDefaultDialer();
+    }
+
+    @UsedByGodot
+    public String answerCallById(String callId) {
+        return _telephony != null ? _telephony.answerCallById(callId) : "error:no_telephony";
+    }
+
+    @UsedByGodot
+    public String endCallById(String callId) {
+        return _telephony != null ? _telephony.endCallById(callId) : "error:no_telephony";
+    }
+
+    @UsedByGodot
+    public String holdCall(String callId) {
+        return _telephony != null ? _telephony.holdCall(callId) : "error:no_telephony";
+    }
+
+    @UsedByGodot
+    public String unholdCall(String callId) {
+        return _telephony != null ? _telephony.unholdCall(callId) : "error:no_telephony";
+    }
+
+    @UsedByGodot
+    public String setAudioRoute(String route) {
+        return _telephony != null ? _telephony.setAudioRoute(route) : "error:no_telephony";
+    }
+
+    @UsedByGodot
+    public String listActiveCalls() {
+        return _telephony != null ? _telephony.listActiveCalls() : "[]";
+    }
+
+    @UsedByGodot
+    public boolean isInCallServiceBound() {
+        return _telephony != null && _telephony.isInCallServiceBound();
     }
 
     // ── TelephonyHost interface implementation ─────────────────────────

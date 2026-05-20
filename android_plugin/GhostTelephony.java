@@ -68,6 +68,7 @@ public class GhostTelephony {
         _telephonyManager = (TelephonyManager) ctx.getSystemService(Context.TELEPHONY_SERVICE);
         _telecomManager   = (TelecomManager)   ctx.getSystemService(Context.TELECOM_SERVICE);
         _audioManager     = (AudioManager)      ctx.getSystemService(Context.AUDIO_SERVICE);
+        _wireInCallServiceBridge();
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -179,6 +180,100 @@ public class GhostTelephony {
             intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             _ctx.startActivity(intent);
         }
+    }
+
+    // ── InCallService bridge ─────────────────────────────────────────────
+
+    private void _wireInCallServiceBridge() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+
+        GhostInCallService.setListener(new GhostInCallService.EventListener() {
+            @Override
+            public void onIncomingCall(String callId, String number) {
+                _activeNumber = number;
+                _host.emitTelephonySignal("on_incoming_call", number);
+            }
+
+            @Override
+            public void onCallStarted(String callId, String number) {
+                _activeNumber = number;
+                _callStartMs  = System.currentTimeMillis();
+                _host.emitTelephonySignal("on_call_started", number);
+            }
+
+            @Override
+            public void onCallEnded(String callId, long durationMs) {
+                long secs = durationMs / 1000;
+                _host.emitTelephonySignal("on_call_ended", String.valueOf(secs));
+                _activeNumber = "";
+                _callStartMs  = 0;
+            }
+
+            @Override
+            public void onCallStateChanged(String callId, String state) {
+                _host.emitTelephonySignal("on_call_state_changed", callId + ":" + state);
+            }
+
+            @Override
+            public void onAudioRouteChanged(String route) {
+                _host.emitTelephonySignal("on_audio_route_changed", route);
+            }
+        });
+    }
+
+    public String answerCallById(String callId) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && GhostInCallService.getInstance() != null) {
+            return GhostInCallService.answerCall(callId);
+        }
+        return answerCall();
+    }
+
+    public String endCallById(String callId) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && GhostInCallService.getInstance() != null) {
+            return GhostInCallService.disconnectCall(callId);
+        }
+        return endCall();
+    }
+
+    public String holdCall(String callId) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && GhostInCallService.getInstance() != null) {
+            return GhostInCallService.holdCall(callId);
+        }
+        return "error:requires_default_dialer";
+    }
+
+    public String unholdCall(String callId) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && GhostInCallService.getInstance() != null) {
+            return GhostInCallService.unholdCall(callId);
+        }
+        return "error:requires_default_dialer";
+    }
+
+    public String setAudioRoute(String route) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && GhostInCallService.getInstance() != null) {
+            return GhostInCallService.setAudioRoute(route);
+        }
+        return setSpeakerphone("SPEAKER".equalsIgnoreCase(route));
+    }
+
+    public String listActiveCalls() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && GhostInCallService.getInstance() != null) {
+            return GhostInCallService.listCalls();
+        }
+        return "[]";
+    }
+
+    public boolean isInCallServiceBound() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return GhostInCallService.getInstance() != null;
+        }
+        return false;
     }
 
     // ════════════════════════════════════════════════════════════════════════
