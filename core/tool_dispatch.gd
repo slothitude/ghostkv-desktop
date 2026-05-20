@@ -65,10 +65,20 @@ func _parse_args(args_str: String) -> PackedStringArray:
 	if args_str.strip_edges().is_empty():
 		return result
 
+	# Try quoted args first: "arg1", "arg2"
 	var regex := RegEx.new()
 	regex.compile('"([^"]*)"')
-	for m in regex.search_all(args_str):
-		result.append(m.get_string(1))
+	var matches = regex.search_all(args_str)
+	if matches.size() > 0:
+		for m in matches:
+			result.append(m.get_string(1))
+		return result
+
+	# Fallback: unquoted comma-separated args
+	for part in args_str.split(","):
+		var trimmed: String = part.strip_edges()
+		if not trimmed.is_empty():
+			result.append(trimmed)
 	return result
 
 func build_tool_descriptions() -> String:
@@ -99,3 +109,48 @@ func get_tool_description(tool_name: String) -> String:
 		if client and client.has_method("get_tool_description"):
 			return client.get_tool_description(tool_name)
 	return ""
+
+func build_openai_tools() -> Array:
+	var tools: Array = []
+	for tool_name in _tool_map:
+		var entry: Dictionary = _tool_map[tool_name]
+		var client: Node = entry["client"]
+		var desc: String = ""
+		if client and client.has_method("get_tool_description"):
+			desc = client.get_tool_description(tool_name)
+		if desc.is_empty():
+			desc = "No description available"
+
+		var description_only: String = desc.split("Args:")[0].strip_edges()
+		var params := _parse_params_from_desc(desc)
+		tools.append({
+			"type": "function",
+			"function": {
+				"name": tool_name,
+				"description": description_only,
+				"parameters": params
+			}
+		})
+	return tools
+
+func _parse_params_from_desc(desc: String) -> Dictionary:
+	var params := {"type": "object", "properties": {}}
+	var required: Array = []
+	var args_pos := desc.find("Args:")
+	if args_pos < 0:
+		return params
+
+	var args_str: String = desc.substr(args_pos + 5).strip_edges()
+	if args_str == "none":
+		return params
+
+	var regex := RegEx.new()
+	regex.compile('"([^"]*)"')
+	for m in regex.search_all(args_str):
+		var param_name: String = m.get_string(1)
+		params["properties"][param_name] = {"type": "string", "description": param_name}
+		required.append(param_name)
+
+	if required.size() > 0:
+		params["required"] = required
+	return params

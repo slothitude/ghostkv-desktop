@@ -11,11 +11,12 @@ var _builtin_tools: Node
 var _memory_store: Node
 var _remote_api: Node
 var _telegram_bot: Node
+var _telephony: Node
 
 func _ready() -> void:
 	# Setup window
 	get_window().title = "GhostKV Desktop"
-	get_window().min_size = Vector2(800, 600)
+	get_window().min_size = Vector2(360, 640)
 
 	# Restore window rect from settings (saved in settings.json)
 	var saved_size := Vector2(1200, 800)
@@ -97,6 +98,13 @@ func _ready() -> void:
 	_voice_mgr.name = "VoiceManager"
 	add_child(_voice_mgr)
 	Engine.register_singleton("VoiceManager", _voice_mgr)
+
+	# Telephony manager (Android phone call control)
+	_telephony = Node.new()
+	_telephony.set_script(load("res://core/telephony_manager.gd"))
+	_telephony.name = "TelephonyManager"
+	add_child(_telephony)
+	Engine.register_singleton("TelephonyManager", _telephony)
 
 	# Load settings and configure API client
 	var settings: Dictionary = _session.load_settings()

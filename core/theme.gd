@@ -59,10 +59,10 @@ func build_theme() -> Theme:
 	btn_normal.border_color = ACCENT.lightened(0.15)
 	btn_normal.border_width_top = 1
 	btn_normal.border_width_bottom = 2
-	btn_normal.corner_radius_top_left = 8
-	btn_normal.corner_radius_top_right = 8
-	btn_normal.corner_radius_bottom_left = 8
-	btn_normal.corner_radius_bottom_right = 8
+	btn_normal.corner_radius_top_left = 6
+	btn_normal.corner_radius_top_right = 6
+	btn_normal.corner_radius_bottom_left = 6
+	btn_normal.corner_radius_bottom_right = 6
 	btn_normal.content_margin_top = 6
 	btn_normal.content_margin_bottom = 6
 	btn_normal.content_margin_left = 14

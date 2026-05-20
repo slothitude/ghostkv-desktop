@@ -90,6 +90,12 @@ func _do_step() -> void:
 	_stream_text_buffer = ""
 	_stream_connected = false
 
+	# Pass tool definitions for structured function calling
+	if _tool_dispatch and _tool_dispatch.has_method("build_openai_tools"):
+		var tools: Array = _tool_dispatch.build_openai_tools()
+		if tools.size() > 0:
+			_api_client.set_tool_definitions(tools)
+
 	# Connect signals
 	_api_client.response_received.connect(_on_response)
 	_api_client.error_occurred.connect(_on_error)

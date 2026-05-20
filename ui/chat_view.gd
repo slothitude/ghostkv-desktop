@@ -13,8 +13,13 @@ func _ready() -> void:
 
 	_vbox = VBoxContainer.new()
 	_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_vbox.add_theme_constant_override("separation", 12)
+	_vbox.add_theme_constant_override("separation", 8)
 	add_child(_vbox)
+
+	# Top padding for chat content
+	var top_pad := Control.new()
+	top_pad.custom_minimum_size.y = 8
+	_vbox.add_child(top_pad)
 
 	# Thinking animation timer
 	_thinking_timer = Timer.new()

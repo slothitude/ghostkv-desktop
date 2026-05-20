@@ -11,6 +11,10 @@ var _base_url: String = ""
 var _api_key: String = ""
 var _model: String = "glm-5.1"
 
+# Tool calling support
+var _tool_definitions: Array = []
+var _tools_supported: bool = true
+
 # Streaming state
 var _stream_client: HTTPClient
 var _streaming: bool = false
@@ -28,6 +32,9 @@ func configure(base_url: String, api_key: String, model: String) -> void:
 	_api_key = api_key
 	_model = model
 
+func set_tool_definitions(tools: Array) -> void:
+	_tool_definitions = tools
+
 # --- Non-streaming path (fallback) ---
 
 func generate(messages: Array, temperature: float = 0.8, max_tokens: int = 2048) -> void:
@@ -41,6 +48,10 @@ func generate(messages: Array, temperature: float = 0.8, max_tokens: int = 2048)
 		"temperature": temperature,
 		"max_tokens": max_tokens
 	}
+
+	# Include tool definitions for structured function calling
+	if _tools_supported and _tool_definitions.size() > 0:
+		body["tools"] = _tool_definitions
 
 	var headers := [
 		"Content-Type: application/json",
@@ -67,6 +78,12 @@ func _on_request_completed(result: int, code: int, _headers: PackedStringArray, 
 
 	if code < 200 or code >= 300:
 		var body_text := body.get_string_from_utf8()
+		# If tools parameter caused error, retry without tools
+		if _tool_definitions.size() > 0 and _tools_supported:
+			print("ApiClient: disabling structured tools (API returned %d)" % code)
+			_tools_supported = false
+			_retry_last()
+			return
 		error_occurred.emit("API error %d: %s" % [code, body_text.left(200)])
 		return
 
@@ -84,8 +101,26 @@ func _on_request_completed(result: int, code: int, _headers: PackedStringArray, 
 
 	if data.has("choices") and data["choices"].size() > 0:
 		var choice: Dictionary = data["choices"][0]
-		if choice.has("message") and choice["message"].has("content"):
-			text = choice["message"]["content"]
+		if choice.has("message"):
+			var msg: Dictionary = choice["message"]
+
+			# Check for structured tool_calls first
+			if msg.has("tool_calls") and msg["tool_calls"] != null and msg["tool_calls"].size() > 0:
+				var tc: Dictionary = msg["tool_calls"][0]
+				var tc_func: Dictionary = tc.get("function", {})
+				var tool_name: String = tc_func.get("name", "")
+				var args_json: String = tc_func.get("arguments", "{}")
+				text = _tool_call_to_action(tool_name, args_json)
+				print("ApiClient: structured tool_call -> %s" % text.left(200))
+			else:
+				# Text-based response
+				if msg.has("content") and msg["content"] != null:
+					text = msg["content"]
+				# GLM-5.1 puts tool calls in reasoning_content — append it so ReactLoop can match
+				if msg.has("reasoning_content") and msg["reasoning_content"] != null:
+					var reasoning: String = msg["reasoning_content"]
+					if not reasoning.is_empty() and not text.contains("Action:"):
+						text = text + "\n" + reasoning
 
 	if data.has("usage"):
 		usage = data["usage"]
@@ -336,3 +371,15 @@ func cancel_stream() -> void:
 
 func is_streaming() -> bool:
 	return _streaming
+
+func _tool_call_to_action(tool_name: String, args_json: String) -> String:
+	var json := JSON.new()
+	if json.parse(args_json) != OK:
+		return "Action: %s()" % tool_name
+
+	var args: Dictionary = json.data
+	var arg_values: PackedStringArray = []
+	for key in args:
+		arg_values.append("\"%s\"" % str(args[key]))
+
+	return "Action: %s(%s)" % [tool_name, ", ".join(arg_values)]

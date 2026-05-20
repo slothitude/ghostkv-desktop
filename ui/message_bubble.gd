@@ -18,7 +18,7 @@ func _ready() -> void:
 
 	# Role label — small, muted
 	_role_label = Label.new()
-	_role_label.add_theme_font_size_override("font_size", 11)
+	_role_label.add_theme_font_size_override("font_size", 10)
 	_role_label.add_theme_color_override("font_color", Color("#6b6b80"))
 	vbox.add_child(_role_label)
 
@@ -29,7 +29,7 @@ func _ready() -> void:
 	_rich_label.scroll_following = false
 	_rich_label.custom_minimum_size = Vector2(0, 24)
 	_rich_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_rich_label.add_theme_font_size_override("normal_font_size", 14)
+	_rich_label.add_theme_font_size_override("normal_font_size", 13)
 	_rich_label.add_theme_color_override("default_color", Color("#e8e8f0"))
 	_rich_label.add_theme_constant_override("line_separation", 3)
 	# Code block styling
@@ -46,7 +46,7 @@ func _ready() -> void:
 	_retry_btn = Button.new()
 	_retry_btn.text = "Retry"
 	_retry_btn.add_theme_font_size_override("font_size", 11)
-	_retry_btn.custom_minimum_size = Vector2(64, 32)
+	_retry_btn.custom_minimum_size = Vector2(64, 28)
 	_retry_btn.tooltip_text = "Retry this request"
 	var retry_bg := StyleBoxFlat.new()
 	retry_bg.bg_color = Color("#3a2040")
@@ -67,7 +67,7 @@ func _ready() -> void:
 	_copy_btn = Button.new()
 	_copy_btn.text = "Copy"
 	_copy_btn.add_theme_font_size_override("font_size", 11)
-	_copy_btn.custom_minimum_size = Vector2(64, 32)
+	_copy_btn.custom_minimum_size = Vector2(64, 28)
 	_copy_btn.tooltip_text = "Copy message text"
 	var copy_bg := StyleBoxFlat.new()
 	copy_bg.bg_color = Color("#1a1a30")
@@ -84,23 +84,20 @@ func _ready() -> void:
 	_copy_btn.visible = false
 	_action_row.add_child(_copy_btn)
 
-	# Padding
-	add_theme_constant_override("margin_top", 10)
-	add_theme_constant_override("margin_bottom", 10)
-	add_theme_constant_override("margin_left", 16)
-	add_theme_constant_override("margin_right", 16)
+	# Padding (compact)
+	add_theme_constant_override("margin_top", 6)
+	add_theme_constant_override("margin_bottom", 6)
+	add_theme_constant_override("margin_left", 12)
+	add_theme_constant_override("margin_right", 12)
 
 func setup(role: String, text: String) -> void:
 	_role = role
 	_raw_buffer = text
 	var style := StyleBoxFlat.new()
-	style.corner_radius_top_left = 12
-	style.corner_radius_top_right = 12
-	style.corner_radius_bottom_left = 12
-	style.corner_radius_bottom_right = 12
-	style.shadow_color = Color(0, 0, 0, 0.25)
-	style.shadow_size = 4
-	style.shadow_offset = Vector2(0, 2)
+	style.corner_radius_top_left = 8
+	style.corner_radius_top_right = 8
+	style.corner_radius_bottom_left = 8
+	style.corner_radius_bottom_right = 8
 
 	match role:
 		"user":

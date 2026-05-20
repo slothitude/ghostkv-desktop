@@ -108,16 +108,22 @@ func _stop_voice_listening() -> void:
 var _signals_connected: bool = false
 
 func _connect_plugin_signals() -> void:
-	if not _plugin or _signals_connected:
+	if not _plugin:
+		return
+	if _signals_connected:
 		return
 	var signals := ["speech_result", "speech_error", "speech_partial", "listening_state", "tts_completed"]
 	var handlers := [_on_speech_result, _on_speech_error, _on_speech_partial, _on_listening_state, _on_tts_completed]
+	var all_connected := true
 	for i in range(signals.size()):
 		var sig_name: String = signals[i]
 		var handler: Callable = handlers[i]
-		if _plugin.has_signal(sig_name) and not _plugin.is_connected(sig_name, handler):
+		if not _plugin.has_signal(sig_name):
+			all_connected = false
+			continue
+		if not _plugin.is_connected(sig_name, handler):
 			_plugin.connect(sig_name, handler)
-	_signals_connected = true
+	_signals_connected = all_connected
 
 func _on_speech_result(text: String) -> void:
 	_is_listening = false

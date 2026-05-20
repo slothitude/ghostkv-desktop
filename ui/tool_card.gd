@@ -25,14 +25,14 @@ func _ready() -> void:
 	var dot := Label.new()
 	dot.text = ">"
 	dot.add_theme_color_override("font_color", Color("#6c63ff"))
-	dot.add_theme_font_size_override("font_size", 16)
+	dot.add_theme_font_size_override("font_size", 12)
 	dot.custom_minimum_size.x = 16
 	_header.add_child(dot)
 
 	var name_label := Label.new()
 	name_label.text = "Tool"
 	name_label.add_theme_color_override("font_color", Color("#6c63ff"))
-	name_label.add_theme_font_size_override("font_size", 13)
+	name_label.add_theme_font_size_override("font_size", 12)
 	name_label.name = "ToolNameLabel"
 	_header.add_child(name_label)
 
@@ -123,22 +123,19 @@ func _ready() -> void:
 	_result_label.text = "Waiting..."
 	_body.add_child(_result_label)
 
-	# Styling
+	# Styling (compact)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color("#141428")
 	style.border_color = Color("#6c63ff")
 	style.border_width_left = 3
-	style.corner_radius_top_left = 6
-	style.corner_radius_top_right = 6
-	style.corner_radius_bottom_left = 6
-	style.corner_radius_bottom_right = 6
-	style.content_margin_top = 8
-	style.content_margin_bottom = 8
-	style.content_margin_left = 12
-	style.content_margin_right = 12
-	style.shadow_color = Color(0, 0, 0, 0.2)
-	style.shadow_size = 3
-	style.shadow_offset = Vector2(1, 2)
+	style.corner_radius_top_left = 4
+	style.corner_radius_top_right = 4
+	style.corner_radius_bottom_left = 4
+	style.corner_radius_bottom_right = 4
+	style.content_margin_top = 4
+	style.content_margin_bottom = 4
+	style.content_margin_left = 8
+	style.content_margin_right = 8
 	add_theme_stylebox_override("panel", style)
 
 func setup(step: int, tool_name: String, args: String) -> void:

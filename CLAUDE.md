@@ -27,6 +27,7 @@ Output goes to `export/` (ghostkv-desktop.exe or ghostkv-desktop.apk).
 
 ### Android Plugin (GhostKVPlugin)
 - Source: `android_plugin/GhostKVPlugin.java` — extends `GodotPlugin`, uses `@UsedByGodot` annotations
+- Background service: `android_plugin/GhostKVBgService.java` — foreground service with WakeLock to keep Telegram bot polling when app is backgrounded
 - Plugin AAR: `android/plugins/GhostKVPlugin.aar` — contains `AndroidManifest.xml` (with `<meta-data>` for v2 plugin discovery), `classes.jar`, `assets/godot_plugin.xml`
 - Plugin config: `android/plugins/GhostKVPlugin.gdap` — INI format `[config]` section with name/binary_type/binary
 - Must be enabled: `export_presets.cfg` needs `plugins/GhostKVPlugin=true`
@@ -57,9 +58,19 @@ cp build/compile/GhostKVPlugin.aar android/plugins/
 
 ### ADB / Phone Testing
 ```bash
-MSYS_NO_PATHCONV=1 adb connect 192.168.0.106:38827
-MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:38827 install -r export/ghostkv-desktop.apk
-MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:38827 shell am start -n com.slothitude.ghostkv/com.godot.game.GodotAppLauncher
+MSYS_NO_PATHCONV=1 adb connect 192.168.0.106:34953
+MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:34953 install -r export/ghostkv-desktop.apk
+MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:34953 shell am start -n com.slothitude.ghostkv/com.godot.game.GodotAppLauncher
+```
+Phone ADB port changes — check the current port on the device (Wireless debugging settings).
+
+### Checking Logs
+```bash
+# Get the GhostKV PID from latest godot log
+adb logcat -d | grep "I godot" | tail -5
+
+# Filter by PID (replace with actual PID)
+adb logcat -d | grep "PID" | grep -v "Finsky\|MotoExtend\|AudioSystem" | tail -20
 ```
 
 ## Architecture
@@ -72,33 +83,77 @@ MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:38827 shell am start -n com.slothitude.g
 2. **SessionManager** (`core/session.gd`) — session persistence to `user://` JSON, settings load/save
 3. **ApiClient** (`core/api_client.gd`) — OpenAI-compatible HTTP API. Has non-streaming (`generate`/`generate_with_retry` via HTTPRequest) and streaming (`generate_stream` via HTTPClient) paths. **Streaming has a body truncation bug on Android** — use non-streaming.
 4. **ToolDispatch** (`core/tool_dispatch.gd`) — routes `Action: tool_name("args")` from LLM output to registered tool handlers. Uses regex `"([^"]*)"` for arg parsing, creates `{"arg0":..., "arg1":...}` dicts.
-5. **ReactLoop** (`core/react_loop.gd`) — ReAct loop. Detects `Action: tool_name(args)` in LLM response via regex. If found, dispatches tool, appends observation, loops. If not, emits `answer_ready`.
-6. **Markdown** (`core/markdown.gd`) — Markdown → BBCode converter
-7. **BuiltinTools** (`core/builtin_tools.gd`) — 19 built-in tools. On Android, bridges to `GhostKVPlugin` Java singleton; has `OS.execute()` shell fallbacks when plugin is null. Tools: open_url, run_command, file_read, calculator, send_sms, open_camera, open_app, list_apps, run_python, toast, vibrate, get_contacts, get_location, read_sms, set_alarm, set_timer, speak, start_listening.
-8. **VoiceManager** (`core/voice_manager.gd`) — Voice pipeline orchestrator. Dictation mode (mic tap → STT → fills input), voice chat mode (continuous STT→LLM→TTS loop), auto-TTS, barge-in detection. On Android, bridges to `GhostKVPlugin` SpeechRecognizer + TTS APIs.
+5. **MemoryStore** (`core/memory_store.gd`) — graph memory store. JSON persistence at `user://memory.db.json`. 8 tools: remember, recall, relate, search_memory, list_entities, forget, forget_fact, export_memory. `auto_recall()` injects relevant memory into ReactLoop system prompt.
+6. **ReactLoop** (`core/react_loop.gd`) — ReAct loop. Detects `Action: tool_name(args)` in LLM response via regex. If found, dispatches tool, appends observation, loops. If not, emits `answer_ready`.
+7. **Markdown** (`core/markdown.gd`) — Markdown → BBCode converter
+8. **BuiltinTools** (`core/builtin_tools.gd`) — 56 built-in tools including 8 memory tools (via MemoryStore registration), 2 web tools (web_search via SearXNG, web_read), plus ~46 Android-bridged tools (SMS, contacts, camera, etc). On Android, bridges to `GhostKVPlugin` Java singleton; has `OS.execute()` shell fallbacks.
+9. **VoiceManager** (`core/voice_manager.gd`) — Voice pipeline orchestrator. Dictation mode (mic tap → STT → fills input), voice chat mode (continuous STT→LLM→TTS loop), auto-TTS, barge-in detection.
+
+### Tool Registration Flow
+1. `BuiltinTools._ready()` → registers 56 tools with `ToolDispatch.register_tool(name, "builtin", self)`
+2. `MemoryStore._ready()` → registers 8 memory tools with `ToolDispatch.register_tool(name, "memory", self)`
+3. `McpPanel._load_servers()` → connects MCP servers, discovers tools via `MCPClient`, registers with `ToolDispatch`
+4. `ReactLoop.run()` → calls `ToolDispatch.build_tool_descriptions()` → injects all tool descriptions into system prompt
+
+### MCP Client (SSE Transport)
+`core/mcp_client.gd` — uses low-level `HTTPClient` (not `HTTPRequest`) for SSE handshake because `HTTPRequest` hangs on streaming responses. Flow:
+1. Connect to `/sse` endpoint via `HTTPClient`, read initial SSE data for message endpoint
+2. Keep `HTTPClient` alive as `_sse_client` for reading SSE responses
+3. `_poll_sse()` loop reads chunks, buffers complete SSE events (`\n\n` delimited)
+4. `_send_jsonrpc()` creates a separate `HTTPClient` for POSTing (POST returns 202, actual response arrives via SSE)
+5. `_discover_tools()` sends `tools/list`, response arrives via SSE → emits `tools_discovered`
+
+**MCP Panel** (`ui/mcp_panel.gd`) — auto-connects default servers from `_default_settings()`. Merges defaults into saved server list. Calls `_load_servers()` directly in `_ready()` (settings already loaded before UI created).
+
+### Web Tools (Builtin, no MCP dependency)
+- `web_search` — hits SearXNG at `http://192.168.0.33:8888/search?q=...&format=json`, returns top 5 results
+- `web_read` — fetches page via web-reader at `http://192.168.0.33:8003/read?url=...`, truncates to 4000 chars
+
+### Memory Store (Graph Memory)
+- **Storage**: `user://memory.db.json` — entity name (lowercased) as dict key for O(1) lookup
+- **Schema**: `{entities: {key: {name, type, created, facts: {key: {key, value, created}}, relations: [{relation, target, created}]}}}`
+- **Auto-recall**: `auto_recall(query)` matches entities by name/words/fact values, returns formatted context
+- **Export**: `export_memory()` writes Obsidian-flavored markdown to `user://vault/` with `[[wikilinks]]`
 
 ### UI (all built programmatically, no .tscn editor layouts)
-- **App** (`ui/app.gd`) — root `Control`, HBoxContainer with sidebar + chat. Detects mobile breakpoint at 720px. Voice mode toggle in status row, floating 64x64 mic overlay when active. `send_voice_message()` for voice input.
+- **App** (`ui/app.gd`) — root `Control`, HBoxContainer with sidebar + chat. Detects mobile breakpoint at 720px. Voice mode toggle in status row, floating 64x64 mic overlay when active.
 - **Sidebar** (`ui/sidebar.tscn`) — sessions list, MCP panel, settings panel
-- **ChatView** (`ui/chat_view.tscn`) — scrollable message list
+- **ChatView** (`ui/chat_view.tscn`) — scrollable message list, thinking bubble with animated dots
 - **MessageBubble** (`ui/message_bubble.tscn`) — user (purple) / assistant (dark) / error styling
 - **ToolCard** (`ui/tool_card.tscn`) — expandable card with accent border for tool calls
-- **InputBar** (`ui/input_bar.tscn`) — text input + mic button (Android) + send/stop button. Mic button pulses while listening. `set_dictated_text()` fills input from STT.
+- **InputBar** (`ui/input_bar.tscn`) — text input + mic button (Android) + send/stop button
 - **StatusBar** (`ui/status_bar.tscn`) — model name, step counter, token count, elapsed time
 
 ### Remote API
-`core/remote_api.gd` — TCPServer on port 9797. Endpoints: `GET /ping`, `POST /send {"message": "..."}`. Injects messages into App's `_on_message_sent()`.
+`core/remote_api.gd` — TCPServer on port 9797. Endpoints: `GET /ping`, `POST /send {"message": "..."}`. Injects messages into App's `_on_message_sent()`. Used for testing via `adb shell curl`. Note: added as child node but NOT registered as an Engine singleton.
 
-### MCP Integration
-`core/mcp_client.gd` — SSE client for MCP tool servers. Connects, discovers tools, calls them via HTTP POST. Auto-reconnect with backoff. Tools registered with ToolDispatch via `register_tool()`.
+### Telegram Bot
+`core/telegram_bot.gd` — background thread long-polling. Emits messages into App. Requires `telegram_bot_token` and `telegram_chat_id` in settings.
 
-## Key Gotchas
-- **Android streaming bug**: `HTTPClient` sends truncated request body on Android. Use `generate_with_retry()` (non-streaming, uses HTTPRequest node) instead of `generate_stream()`.
-- **Tool arg parsing**: LLM returns `Action: send_sms("0488200725", "message")` → `_parse_args` extracts quoted strings → `_args_to_dict` creates `{"arg0": "0488200725", "arg1": "message"}`. Tool functions must check `arg0`/`arg1` in addition to named params.
-- **Singleton access**: Use `Engine.get_singleton("Name")` — returns `Variant`, cast to `Node`. All singletons registered in `main.gd`.
-- **Node tree**: App node is named "App" (from `app.tscn`). Remote API finds it via `_find_node(get_tree().root, "App")`.
-- **Windows paths in GDScript**: `\t` in string paths becomes TAB. Use forward slashes or raw strings.
-- **SpeechRecognizer threading**: Must run on Android main thread. Plugin uses `Handler(Looper.getMainLooper()).post()` — never call `SpeechRecognizer` APIs from Godot's render thread directly.
-- **TTS init race**: First `speakWithId()` call may arrive before TTS engine is ready. Plugin queues pending text and flushes when `_ttsReady` becomes true.
-- **Thinking bubble race**: `queue_free()` on thinking bubble is deferred. `chat_view._on_answer()` must `await get_tree().process_frame` before adding assistant bubble, or the freed thinking bubble steals the update.
-- **AAR rebuild**: The `jar cf` command must use an absolute output path on Windows, and never extract from + write to the same AAR file. Use a staging directory with a template copy.
+## GDScript Gotchas for This Codebase
+
+- **`HTTPRequest` can't handle SSE** — it buffers the entire response body before firing `request_completed`. SSE streams never "complete", so the callback never fires. Use low-level `HTTPClient` for SSE/streaming HTTP.
+- **`HTTPClient.connect_to_host()` takes `TLSOptions`** not `bool` for the TLS parameter in Godot 4.6. Use `TLSOptions.client()` or `null`.
+- **Type inference fails on dict access** — `var host := dict["host"]` fails. Use explicit types: `var host: String = dict["host"]`. Same for `var x := some_dict.size()`.
+- **`PackedStringArray` has no `.join()`** — use `separator.join(array)` (String method), not `array.join(separator)`.
+- **`match` requires `_` for default** — bare `return` at the end of a `match` block causes parse error. Use `_:` branch.
+- **No Python-style docstrings** — `"""text"""` is not valid GDScript.
+- **`await` in `_ready()`** — cooperative async works in GDScript. Multiple coroutines interleave via `await get_tree().process_frame`. An infinite `while/await` loop blocks the function from returning but doesn't block other coroutines.
+- **Android streaming bug**: `HTTPClient` sends truncated request body on Android. Use `generate_with_retry()` (non-streaming HTTPRequest).
+- **Tool arg parsing**: LLM returns `Action: tool("arg1", "arg2")` → regex extracts quoted strings → `{"arg0": "arg1", "arg1": "arg2"}`. Tool functions must check both positional (`arg0`/`arg1`) and named params.
+- **Singleton access**: `Engine.get_singleton("Name")` returns `Variant` — cast to `Node`. All singletons registered in `main.gd`.
+- **Windows paths**: `\t` in GDScript strings becomes TAB. Always use forward slashes.
+- **SpeechRecognizer threading**: Must run on Android main thread. Plugin uses `Handler(Looper.getMainLooper()).post()`.
+- **TTS init race**: First `speakWithId()` may arrive before TTS ready. Plugin queues and flushes.
+- **Thinking bubble race**: `queue_free()` is deferred. `chat_view._on_answer()` must `await get_tree().process_frame` before adding assistant bubble.
+- **AAR rebuild**: `jar cf` must use absolute output path on Windows. Never extract from + write to same AAR file.
+- **Settings merge**: `SessionManager.load_settings()` only adds missing keys from defaults — it does NOT overwrite existing keys. To change a default for an already-installed app, the code must actively merge (as done in `mcp_panel.gd:_load_servers()`).
+
+## Default Settings
+
+Key defaults from `session.gd:_default_settings()`:
+- API: `https://api.z.ai/api/coding/paas/v4/chat/completions`, model `glm-5.1`
+- MCP servers: `[{"name": "web-reader", "url": "http://192.168.0.33:8003/sse"}]`
+- SearXNG: `http://192.168.0.33:8888` (hardcoded in builtin_tools web_search)
+- Memory auto-recall: `true`
+- Remote API port: `9797`

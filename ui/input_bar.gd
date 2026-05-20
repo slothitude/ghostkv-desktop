@@ -19,7 +19,7 @@ func _ready() -> void:
 
 	# Input field
 	_input = LineEdit.new()
-	_input.placeholder_text = "Ask GhostKV anything..."
+	_input.placeholder_text = "Message GhostKV..."
 	_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_input.clear_button_enabled = true
 	_input.text_submitted.connect(_on_submit)
@@ -31,11 +31,7 @@ func _ready() -> void:
 	var input_bg := StyleBoxFlat.new()
 	input_bg.bg_color = Color("#1a1a28")
 	input_bg.border_color = Color("#2a2a40")
-	input_bg.border_width_bottom = 2
-	input_bg.corner_radius_top_left = 10
-	input_bg.corner_radius_top_right = 10
-	input_bg.corner_radius_bottom_left = 10
-	input_bg.corner_radius_bottom_right = 10
+	input_bg.border_width_bottom = 1
 	input_bg.content_margin_left = 14
 	input_bg.content_margin_top = 8
 	input_bg.content_margin_bottom = 8
@@ -112,7 +108,7 @@ func _ready() -> void:
 	add_child(_stop_btn)
 
 	# Spacing
-	add_theme_constant_override("separation", 8)
+	add_theme_constant_override("separation", 6)
 
 	# Connect busy state
 	_state.agent_busy.connect(_on_busy_changed)

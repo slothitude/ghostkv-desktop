@@ -6,10 +6,11 @@
 # Export output
 export/
 
-# Android build artifacts
-android/build/.gradle/
-android/build/build/
-android/build/.gdignore
+# Build artifacts
+build/
+android/build/
+android_plugin/build/
+android_plugin/libs/
 
 # Backups
 *.bak

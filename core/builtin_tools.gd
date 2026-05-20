@@ -110,6 +110,13 @@ func _register_tools() -> void:
 	td.register_tool("start_listening", "builtin", self)
 	td.register_tool("make_call", "builtin", self)
 	td.register_tool("get_call_log", "builtin", self)
+	td.register_tool("answer_call", "builtin", self)
+	td.register_tool("end_call", "builtin", self)
+	td.register_tool("get_call_state", "builtin", self)
+	td.register_tool("set_call_mute", "builtin", self)
+	td.register_tool("set_call_speaker", "builtin", self)
+	td.register_tool("start_call_monitor", "builtin", self)
+	td.register_tool("stop_call_monitor", "builtin", self)
 	td.register_tool("get_calendar_events", "builtin", self)
 	td.register_tool("create_calendar_event", "builtin", self)
 	td.register_tool("read_clipboard", "builtin", self)
@@ -183,6 +190,20 @@ func get_tool_description(tool_name: String) -> String:
 			return "Make a phone call (Android only). Requires confirmation unless contact has full trust. Args: \"phone\""
 		"get_call_log":
 			return "Read recent call history. Returns JSON array of {number, name, date, duration, type}. Args: \"limit\" (default 20)"
+		"answer_call":
+			return "Answer an incoming ringing call (Android 8+). Args: none"
+		"end_call":
+			return "End or reject the current call (Android 9+). Args: none"
+		"get_call_state":
+			return "Get current call state: idle, ringing, or offhook. Args: none"
+		"set_call_mute":
+			return "Mute or unmute the microphone during a call. Args: \"mute\" (\"true\" or \"false\")"
+		"set_call_speaker":
+			return "Switch call audio to speaker or earpiece. Args: \"on\" (\"true\" or \"false\")"
+		"start_call_monitor":
+			return "Start monitoring call state changes. Fires incoming_call, call_started, call_ended events. Args: none"
+		"stop_call_monitor":
+			return "Stop monitoring call state. Args: none"
 		"get_calendar_events":
 			return "Read calendar events. Returns JSON array of {title, start, end, location, description}. Args: \"limit\" (default 20)"
 		"create_calendar_event":
@@ -284,6 +305,20 @@ func get_tool_schema(tool_name: String) -> Dictionary:
 			return {"type": "object", "properties": {"phone": {"type": "string"}}, "required": ["phone"]}
 		"get_call_log":
 			return {"type": "object", "properties": {"limit": {"type": "string"}}, "required": []}
+		"answer_call":
+			return {"type": "object", "properties": {}}
+		"end_call":
+			return {"type": "object", "properties": {}}
+		"get_call_state":
+			return {"type": "object", "properties": {}}
+		"set_call_mute":
+			return {"type": "object", "properties": {"mute": {"type": "string"}}, "required": ["mute"]}
+		"set_call_speaker":
+			return {"type": "object", "properties": {"on": {"type": "string"}}, "required": ["on"]}
+		"start_call_monitor":
+			return {"type": "object", "properties": {}}
+		"stop_call_monitor":
+			return {"type": "object", "properties": {}}
 		"get_calendar_events":
 			return {"type": "object", "properties": {"limit": {"type": "string"}}, "required": []}
 		"create_calendar_event":
@@ -383,6 +418,20 @@ func call_tool(tool_name: String, args: Dictionary) -> String:
 			return await _tool_make_call(args)
 		"get_call_log":
 			return _tool_get_call_log(args)
+		"answer_call":
+			return _tool_answer_call()
+		"end_call":
+			return _tool_end_call()
+		"get_call_state":
+			return _tool_get_call_state()
+		"set_call_mute":
+			return _tool_set_call_mute(args)
+		"set_call_speaker":
+			return _tool_set_call_speaker(args)
+		"start_call_monitor":
+			return _tool_start_call_monitor()
+		"stop_call_monitor":
+			return _tool_stop_call_monitor()
 		"get_calendar_events":
 			return _tool_get_calendar_events(args)
 		"create_calendar_event":
@@ -730,6 +779,66 @@ func _tool_get_call_log(args: Dictionary) -> String:
 	if _plugin:
 		return _plugin.getCallLog(int(limit))
 	return "Error: call log only available on Android with plugin"
+
+func _tool_answer_call() -> String:
+	var tel := Engine.get_singleton("TelephonyManager") as Node
+	if tel and tel.has_method("answer_call"):
+		return tel.answer_call()
+	if _plugin and _plugin.has_method("answerCall"):
+		return _plugin.answerCall()
+	return "Error: answering calls requires Android 8+ with telephony plugin"
+
+func _tool_end_call() -> String:
+	var tel := Engine.get_singleton("TelephonyManager") as Node
+	if tel and tel.has_method("end_call"):
+		return tel.end_call()
+	if _plugin and _plugin.has_method("endCall"):
+		return _plugin.endCall()
+	return "Error: ending calls requires Android 9+ with telephony plugin"
+
+func _tool_get_call_state() -> String:
+	var tel := Engine.get_singleton("TelephonyManager") as Node
+	if tel and tel.has_method("get_raw_state"):
+		return tel.get_raw_state()
+	if _plugin and _plugin.has_method("getCallState"):
+		return _plugin.getCallState()
+	return "idle"
+
+func _tool_set_call_mute(args: Dictionary) -> String:
+	var mute_str: String = args.get("mute", args.get("arg0", "true"))
+	var mute: bool = mute_str == "true"
+	var tel := Engine.get_singleton("TelephonyManager") as Node
+	if tel and tel.has_method("set_mute"):
+		return tel.set_mute(mute)
+	if _plugin and _plugin.has_method("setMicMute"):
+		return _plugin.setMicMute(mute)
+	return "Error: call mute only available on Android with telephony plugin"
+
+func _tool_set_call_speaker(args: Dictionary) -> String:
+	var on_str: String = args.get("on", args.get("arg0", "true"))
+	var on: bool = on_str == "true"
+	var tel := Engine.get_singleton("TelephonyManager") as Node
+	if tel and tel.has_method("set_speaker"):
+		return tel.set_speaker(on)
+	if _plugin and _plugin.has_method("setSpeakerphone"):
+		return _plugin.setSpeakerphone(on)
+	return "Error: speaker control only available on Android with telephony plugin"
+
+func _tool_start_call_monitor() -> String:
+	var tel := Engine.get_singleton("TelephonyManager") as Node
+	if tel and tel.has_method("start_monitor"):
+		return tel.start_monitor()
+	if _plugin and _plugin.has_method("startCallMonitor"):
+		return _plugin.startCallMonitor()
+	return "Error: call monitoring only available on Android with telephony plugin"
+
+func _tool_stop_call_monitor() -> String:
+	var tel := Engine.get_singleton("TelephonyManager") as Node
+	if tel and tel.has_method("stop_monitor"):
+		return tel.stop_monitor()
+	if _plugin and _plugin.has_method("stopCallMonitor"):
+		return _plugin.stopCallMonitor()
+	return "Error: call monitoring only available on Android with telephony plugin"
 
 func _tool_get_calendar_events(args: Dictionary) -> String:
 	var limit: String = args.get("input", args.get("limit", args.get("arg0", "20")))

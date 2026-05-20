@@ -3,7 +3,11 @@ package com.slothitude.ghostkv;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlarmManager;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.Service;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothDevice;
@@ -14,6 +18,7 @@ import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.os.Environment;
@@ -47,6 +52,7 @@ import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.telephony.SmsManager;
+import android.util.Log;
 import android.view.WindowManager;
 import android.widget.Toast;
 
@@ -61,10 +67,18 @@ import org.godotengine.godot.plugin.UsedByGodot;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 /**
  * GhostKV Android Plugin — bridges Godot GDScript to Android system APIs.
@@ -72,9 +86,10 @@ import java.util.Set;
  * Exposes: execCommand, sendSMS, openCamera, openApp, openUrl, listApps,
  *          showToast, vibrate, isTermuxInstalled, getPythonPath
  */
-public class GhostKVPlugin extends GodotPlugin {
+public class GhostKVPlugin extends GodotPlugin implements GhostTelephony.TelephonyHost {
 
     private static final int SMS_PERMISSION_CODE = 1001;
+    private static final int RECORD_AUDIO_REQUEST_CODE = 1003;
     private String pendingSmsPhone = "";
     private String pendingSmsMessage = "";
     private TextToSpeech _tts;
@@ -85,6 +100,10 @@ public class GhostKVPlugin extends GodotPlugin {
     private Handler _mainHandler;
     private String _pendingTtsText = null;
     private String _pendingTtsId = null;
+    private PowerManager.WakeLock _bgWakeLock = null;
+    private final ExecutorService _cmdExecutor = Executors.newFixedThreadPool(4);
+    private boolean _pendingListenerStart = false;
+    private GhostTelephony _telephony;
 
     public GhostKVPlugin(Godot godot) {
         super(godot);
@@ -108,6 +127,10 @@ public class GhostKVPlugin extends GodotPlugin {
         signals.add(new SignalInfo("listening_state", Boolean.class));
         signals.add(new SignalInfo("speech_partial", String.class));
         signals.add(new SignalInfo("tts_completed", String.class));
+        signals.add(new SignalInfo("telegram_message", String.class));
+        signals.add(new SignalInfo("on_incoming_call", String.class));
+        signals.add(new SignalInfo("on_call_started", String.class));
+        signals.add(new SignalInfo("on_call_ended", String.class));
         return signals;
     }
 
@@ -119,7 +142,8 @@ public class GhostKVPlugin extends GodotPlugin {
      */
     @UsedByGodot
     public void execCommand(String command) {
-        new Thread(() -> {
+        _cmdExecutor.submit(() -> {
+            Process process = null;
             try {
                 ProcessBuilder pb = new ProcessBuilder("sh", "-c", command);
                 pb.redirectErrorStream(true);
@@ -135,19 +159,22 @@ public class GhostKVPlugin extends GodotPlugin {
                     pb.environment().put("LD_LIBRARY_PATH", "/data/data/com.termux/files/usr/lib");
                 }
 
-                Process process = pb.start();
+                process = pb.start();
                 BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
                 StringBuilder output = new StringBuilder();
                 String line;
                 while ((line = reader.readLine()) != null) {
                     output.append(line).append("\n");
                 }
+                reader.close();
                 int exitCode = process.waitFor();
                 emitSignal("command_completed", output.toString().trim(), exitCode);
             } catch (Exception e) {
                 emitSignal("command_completed", "Error: " + e.getMessage(), -1);
+            } finally {
+                if (process != null) process.destroy();
             }
-        }).start();
+        });
     }
 
     /**
@@ -666,8 +693,8 @@ public class GhostKVPlugin extends GodotPlugin {
         // Check RECORD_AUDIO permission
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.RECORD_AUDIO}, 1003);
-            emitSignal("speech_error", "RECORD_AUDIO permission requested — try again after granting");
+            _pendingListenerStart = true;
+            ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.RECORD_AUDIO}, RECORD_AUDIO_REQUEST_CODE);
             return;
         }
 
@@ -757,11 +784,13 @@ public class GhostKVPlugin extends GodotPlugin {
      */
     @UsedByGodot
     public void stopListening() {
-        if (_speechRecognizer != null && _isListening) {
+        if (_speechRecognizer != null) {
             if (_mainHandler != null) {
                 _mainHandler.post(() -> {
                     if (_speechRecognizer != null) {
                         _speechRecognizer.stopListening();
+                        _speechRecognizer.destroy();
+                        _speechRecognizer = null;
                     }
                 });
             }
@@ -786,23 +815,117 @@ public class GhostKVPlugin extends GodotPlugin {
         startContinuousListening();
     }
 
-    // ── Phone Calls ──────────────────────────────────────────────────
+    // ── Telephony ──────────────────────────────────────────────────
 
-    @UsedByGodot
-    public void makeCall(String phone) {
+    private void _initTelephony() {
+        if (_telephony != null) return;
         Activity activity = getActivity();
         if (activity == null) return;
+        _telephony = new GhostTelephony(this, activity.getApplicationContext());
+    }
 
-        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.CALL_PHONE)
-                == PackageManager.PERMISSION_GRANTED) {
-            Intent intent = new Intent(Intent.ACTION_CALL, android.net.Uri.parse("tel:" + phone));
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    @UsedByGodot
+    public String makeCall(String number) {
+        _initTelephony();
+        if (_telephony != null) return _telephony.makeCall(number);
+        // Fallback: open dialer without telephony delegate
+        Activity activity = getActivity();
+        if (activity == null) return "error:no_activity";
+        Intent intent = new Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:" + number));
+        activity.startActivity(intent);
+        return "ok:dialer_fallback";
+    }
+
+    @UsedByGodot
+    public String answerCall() {
+        _initTelephony();
+        return _telephony != null ? _telephony.answerCall() : "error:no_telephony";
+    }
+
+    @UsedByGodot
+    public String endCall() {
+        _initTelephony();
+        return _telephony != null ? _telephony.endCall() : "error:no_telephony";
+    }
+
+    @UsedByGodot
+    public String startCallMonitor() {
+        _initTelephony();
+        return _telephony != null ? _telephony.startCallMonitor() : "error:no_telephony";
+    }
+
+    @UsedByGodot
+    public String stopCallMonitor() {
+        return _telephony != null ? _telephony.stopCallMonitor() : "error:no_telephony";
+    }
+
+    @UsedByGodot
+    public String getCallState() {
+        return _telephony != null ? _telephony.getCallState() : "idle";
+    }
+
+    @UsedByGodot
+    public String setMicMute(boolean mute) {
+        return _telephony != null ? _telephony.setMicMute(mute) : "error:no_telephony";
+    }
+
+    @UsedByGodot
+    public String setSpeakerphone(boolean on) {
+        return _telephony != null ? _telephony.setSpeakerphone(on) : "error:no_telephony";
+    }
+
+    @UsedByGodot
+    public boolean isDefaultDialer() {
+        return _telephony != null && _telephony.isDefaultDialer();
+    }
+
+    @UsedByGodot
+    public void requestDefaultDialer() {
+        if (_telephony != null) _telephony.requestDefaultDialer();
+    }
+
+    // ── TelephonyHost interface implementation ─────────────────────────
+
+    @Override
+    public void emitTelephonySignal(String signalName, String arg) {
+        emitSignal(signalName, arg);
+    }
+
+    @Override
+    public Activity getHostActivity() {
+        return getActivity();
+    }
+
+    // ── WhatsApp ────────────────────────────────────────────────────
+
+    @UsedByGodot
+    public boolean sendWhatsApp(String phone, String message) {
+        Activity activity = getActivity();
+        if (activity == null) return false;
+
+        // Try ACTION_SENDTO with smsto: URI first (pre-fills message, opens specific chat)
+        Intent intent = new Intent(Intent.ACTION_SENDTO,
+                Uri.parse("smsto:" + phone));
+        intent.setPackage("com.whatsapp");
+        intent.putExtra("sms_body", message);
+
+        if (intent.resolveActivity(activity.getPackageManager()) != null) {
             activity.startActivity(intent);
-        } else {
-            // Fallback: open dialer
-            Intent intent = new Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:" + phone));
-            activity.startActivity(intent);
+            return true;
         }
+
+        // Fallback: ACTION_SEND with text (no phone targeting, but opens WhatsApp)
+        Intent fallback = new Intent(Intent.ACTION_SEND);
+        fallback.setType("text/plain");
+        fallback.putExtra(Intent.EXTRA_TEXT, message);
+        fallback.setPackage("com.whatsapp");
+        if (fallback.resolveActivity(activity.getPackageManager()) != null) {
+            activity.startActivity(fallback);
+            return true;
+        }
+
+        // WhatsApp not installed
+        return false;
     }
 
     // ── Call Log ─────────────────────────────────────────────────────
@@ -1268,10 +1391,8 @@ public class GhostKVPlugin extends GodotPlugin {
             java.io.FileWriter writer = new java.io.FileWriter(file);
             writer.write(content);
             writer.close();
-            // Make visible via MediaStore
-            Intent scanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
-            scanIntent.setData(Uri.fromFile(file));
-            activity.sendBroadcast(scanIntent);
+            // Make visible via MediaStore (MediaScannerConnection replaces deprecated broadcast)
+            android.media.MediaScannerConnection.scanFile(activity, new String[]{file.getAbsolutePath()}, null, null);
             return "Saved to Downloads/" + filename;
         } catch (Exception e) {
             return "Error: " + e.getMessage();
@@ -1323,6 +1444,12 @@ public class GhostKVPlugin extends GodotPlugin {
     public String addContact(String name, String phone) {
         Activity activity = getActivity();
         if (activity == null) return "Error: no activity";
+
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.WRITE_CONTACTS)
+                != PackageManager.PERMISSION_GRANTED) {
+            return "Error: WRITE_CONTACTS permission not granted";
+        }
+
         try {
             ArrayList<ContentProviderOperation> ops = new ArrayList<>();
             ops.add(ContentProviderOperation.newInsert(ContactsContract.RawContacts.CONTENT_URI)
@@ -1402,7 +1529,188 @@ public class GhostKVPlugin extends GodotPlugin {
     }
 
     @Override
+    public void onMainRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode == RECORD_AUDIO_REQUEST_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                if (_pendingListenerStart) {
+                    _pendingListenerStart = false;
+                    startContinuousListening();
+                }
+            } else {
+                emitSignal("speech_error", "RECORD_AUDIO permission denied");
+            }
+        }
+        // Forward telephony permissions
+        if (_telephony != null) {
+            _telephony.onPermissionResult(requestCode, permissions, grantResults);
+        }
+    }
+
+    // ── Telegram bot background polling ─────────────────────────────────
+
+    private Thread _tgPollThread = null;
+    private volatile boolean _tgPollRunning = false;
+    private String _tgBotToken = "";
+    private String _tgChatId = "";
+    private int _tgUpdateOffset = 0;
+
+    @UsedByGodot
+    public void startTelegramPolling(String botToken, String chatId) {
+        stopTelegramPolling();
+        _tgBotToken = botToken;
+        _tgChatId = chatId;
+        _tgUpdateOffset = 0;
+        _tgPollRunning = true;
+
+        // Acquire wake lock so CPU stays on (capped at 10 min as safety net)
+        Activity activity = getActivity();
+        if (activity != null) {
+            PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+            if (pm != null && (_bgWakeLock == null || !_bgWakeLock.isHeld())) {
+                _bgWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GhostKV::TgPoll");
+                _bgWakeLock.acquire(10 * 60 * 1000L);
+            }
+        }
+
+        _tgPollThread = new Thread(this::_tgPollLoop, "TgPoll");
+        _tgPollThread.setDaemon(true);
+        _tgPollThread.start();
+        Log.i("GhostKV", "Telegram polling started in background thread");
+    }
+
+    @UsedByGodot
+    public void stopTelegramPolling() {
+        _tgPollRunning = false;
+        if (_tgPollThread != null) {
+            _tgPollThread.interrupt();
+            _tgPollThread = null;
+        }
+        if (_bgWakeLock != null && _bgWakeLock.isHeld()) {
+            _bgWakeLock.release();
+            _bgWakeLock = null;
+        }
+    }
+
+    @UsedByGodot
+    public boolean isTelegramPolling() {
+        return _tgPollThread != null && _tgPollThread.isAlive();
+    }
+
+    @UsedByGodot
+    public void tgSend(String botToken, String chatId, String text) {
+        _cmdExecutor.submit(() -> {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL("https://api.telegram.org/bot" + botToken + "/sendMessage");
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+                conn.setDoOutput(true);
+                String body = "{\"chat_id\":\"" + chatId + "\",\"text\":" + _jsonStr(text) + "}";
+                OutputStream os = conn.getOutputStream();
+                os.write(body.getBytes("UTF-8"));
+                os.close();
+                conn.getInputStream().close();
+            } catch (Exception e) {
+                Log.w("GhostKV", "tgSend failed: " + e.getMessage());
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        });
+    }
+
+    private void _tgPollLoop() {
+        try {
+            while (_tgPollRunning) {
+                try {
+                    URL url = new URL("https://api.telegram.org/bot" + _tgBotToken + "/getUpdates");
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("POST");
+                    conn.setRequestProperty("Content-Type", "application/json");
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(15000);
+                    conn.setDoOutput(true);
+                    String body = "{\"offset\":" + _tgUpdateOffset + ",\"timeout\":10,\"allowed_updates\":[\"message\"]}";
+                    OutputStream os = conn.getOutputStream();
+                    os.write(body.getBytes("UTF-8"));
+                    os.close();
+
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) sb.append(line);
+                    reader.close();
+                    conn.disconnect();
+
+                    JSONObject json = new JSONObject(sb.toString());
+                    if (!json.getBoolean("ok")) {
+                        Thread.sleep(3000);
+                        continue;
+                    }
+
+                    JSONArray updates = json.getJSONArray("result");
+                    for (int i = 0; i < updates.length(); i++) {
+                        JSONObject update = updates.getJSONObject(i);
+                        _tgUpdateOffset = update.getInt("update_id") + 1;
+
+                        if (!update.has("message")) continue;
+                        JSONObject msg = update.getJSONObject("message");
+
+                        String msgChatId = String.valueOf(msg.getJSONObject("chat").getLong("id"));
+                        if (!msgChatId.equals(_tgChatId)) continue;
+
+                        String text = msg.optString("text", "");
+                        if (text.isEmpty()) continue;
+
+                        Log.i("GhostKV", "Telegram message: " + text);
+
+                        // Bring app to foreground so Godot's main loop resumes
+                        _bringToFront();
+
+                        // Emit signal on render thread
+                        final String msgText = text;
+                        getActivity().runOnUiThread(() -> {
+                            emitSignal("telegram_message", msgText);
+                        });
+                    }
+                } catch (InterruptedException e) {
+                    break;
+                } catch (Exception e) {
+                    Log.w("GhostKV", "TgPoll error: " + e.getMessage());
+                    try { Thread.sleep(3000); } catch (InterruptedException ie) { break; }
+                }
+            }
+        } finally {
+            if (_bgWakeLock != null && _bgWakeLock.isHeld()) {
+                try { _bgWakeLock.release(); } catch (RuntimeException ignored) {}
+            }
+            Log.i("GhostKV", "Telegram polling stopped");
+        }
+    }
+
+    private void _bringToFront() {
+        Activity activity = getActivity();
+        if (activity == null) return;
+        Intent intent = new Intent(activity, activity.getClass());
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+        activity.getApplicationContext().startActivity(intent);
+    }
+
+    private String _jsonStr(String s) {
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"")
+            .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\"";
+    }
+
+    @Override
     public void onMainDestroy() {
+        _cmdExecutor.shutdownNow();
+        stopTelegramPolling();
+        if (_telephony != null) {
+            _telephony.onDestroy();
+            _telephony = null;
+        }
         if (_speechRecognizer != null) {
             _speechRecognizer.destroy();
             _speechRecognizer = null;
