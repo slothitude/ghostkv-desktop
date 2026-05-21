@@ -106,6 +106,13 @@ func _ready() -> void:
 	add_child(_telephony)
 	Engine.register_singleton("TelephonyManager", _telephony)
 
+	# Ghost call agent (autonomous phone conversations)
+	var _call_agent = Node.new()
+	_call_agent.set_script(load("res://core/ghost_call_agent.gd"))
+	_call_agent.name = "GhostCallAgent"
+	add_child(_call_agent)
+	Engine.register_singleton("GhostCallAgent", _call_agent)
+
 	# Load settings and configure API client
 	var settings: Dictionary = _session.load_settings()
 	if settings.has("api_base_url"):
@@ -137,6 +144,11 @@ func _ready() -> void:
 	# Load main UI
 	var app: Node = load("res://ui/app.tscn").instantiate()
 	add_child(app)
+
+	# Wire GhostCallAgent (needs VoiceManager + TelephonyManager ready)
+	var call_agent := Engine.get_singleton("GhostCallAgent") as Node
+	if call_agent and call_agent.has_method("initialise"):
+		call_agent.initialise()
 
 	# Remote API (HTTP on port 9797)
 	_remote_api = Node.new()

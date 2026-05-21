@@ -145,6 +145,8 @@ func _register_tools() -> void:
 	td.register_tool("get_nfc_status", "builtin", self)
 	td.register_tool("send_whatsapp", "builtin", self)
 	td.register_tool("send_telegram", "builtin", self)
+	td.register_tool("auto_answer_call", "builtin", self)
+	td.register_tool("ghost_call", "builtin", self)
 
 # ── Tool descriptions (used by ToolDispatch.build_tool_descriptions) ───────
 
@@ -260,6 +262,10 @@ func get_tool_description(tool_name: String) -> String:
 			return "Send a WhatsApp message (Android only). Opens WhatsApp with pre-filled text — user must tap Send. Args: \"phone\", \"message\""
 		"send_telegram":
 			return "Send a Telegram message via bot. Requires telegram_bot_token and telegram_chat_id in settings. Args: \"message\""
+		"auto_answer_call":
+			return "Answer a ringing call and let the AI agent handle the conversation autonomously. Args: none"
+		"ghost_call":
+			return "Place an outgoing call and let the AI agent handle the conversation autonomously. Args: \"phone\""
 		_:
 			return ""
 
@@ -371,6 +377,10 @@ func get_tool_schema(tool_name: String) -> Dictionary:
 			return {"type": "object", "properties": {"phone": {"type": "string"}, "message": {"type": "string"}}, "required": ["phone", "message"]}
 		"send_telegram":
 			return {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}
+		"auto_answer_call":
+			return {"type": "object", "properties": {}}
+		"ghost_call":
+			return {"type": "object", "properties": {"phone": {"type": "string"}}, "required": ["phone"]}
 		_:
 			return {}
 
@@ -488,6 +498,10 @@ func call_tool(tool_name: String, args: Dictionary) -> String:
 			return _tool_send_whatsapp(args)
 		"send_telegram":
 			return await _tool_send_telegram(args)
+		"auto_answer_call":
+			return _tool_auto_answer_call()
+		"ghost_call":
+			return await _tool_ghost_call(args)
 		_:
 			return "Error: Unknown built-in tool '%s'" % tool_name
 
@@ -1164,6 +1178,30 @@ func _tool_send_telegram(args: Dictionary) -> String:
 		else:
 			return "Error: Telegram API error: %s" % data.get("description", "unknown")
 	return "Telegram message sent"
+
+func _tool_auto_answer_call() -> String:
+	var agent := Engine.get_singleton("GhostCallAgent") as Node
+	if not agent:
+		return "Error: GhostCallAgent not available"
+	if not agent.has_method("auto_answer_call"):
+		return "Error: GhostCallAgent has no auto_answer_call method"
+	return agent.auto_answer_call()
+
+func _tool_ghost_call(args: Dictionary) -> String:
+	var phone: String = args.get("phone", args.get("input", args.get("arg0", "")))
+	if phone.is_empty():
+		return "Error: phone number required"
+	# Check trust level for outgoing calls
+	if not _is_full_trusted(phone):
+		var confirmed: bool = await _await_confirmation("Ghost Call", phone)
+		if not confirmed:
+			return "Ghost call cancelled by user"
+	var agent := Engine.get_singleton("GhostCallAgent") as Node
+	if not agent:
+		return "Error: GhostCallAgent not available"
+	if not agent.has_method("ghost_call"):
+		return "Error: GhostCallAgent has no ghost_call method"
+	return agent.ghost_call(phone)
 
 # ── Web tools (SearXNG + web-reader) ────────────────────────────────────────
 

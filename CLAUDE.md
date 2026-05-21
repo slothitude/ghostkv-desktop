@@ -18,12 +18,13 @@ GhostKV Desktop is a Godot 4.6 AI agent client with a ReAct (Think → Act → O
 
 Output goes to `export/` (ghostkv-desktop.exe or ghostkv-desktop.apk).
 
-### Android Build Requirements
+### Android Build Notes
 - **JDK 17** at `C:/Users/aaron/jdk-17/jdk-17.0.19+10` — configured in `AppData/Roaming/Godot/editor_settings-4.6.tres` (`export/android/java_sdk_path`). JDK 25 causes "Unsupported class file major version 69".
 - **Android SDK** at `C:/Android/SDK`
 - **Debug keystore** at `C:/Android/debug.keystore`
 - Gradle build template at `res://android/build/` (extracted from Godot export templates). The `gradle_build_directory` in `export_presets.cfg` is `"res://android"` — Godot appends `/build` internally.
 - `.build_version` file at `res://android/.build_version` must contain `4.6.1.stable`
+- **Gradle hang**: Godot often hangs after Gradle finishes. The APK is at `android/build/build/outputs/apk/standard/release/android_release.apk` — if Godot hangs, kill it and install from there directly.
 
 ### Android Plugin (GhostKVPlugin)
 - Source: `android_plugin/GhostKVPlugin.java` — extends `GodotPlugin`, uses `@UsedByGodot` annotations
@@ -58,19 +59,22 @@ cp build/compile/GhostKVPlugin.aar android/plugins/
 
 ### ADB / Phone Testing
 ```bash
-MSYS_NO_PATHCONV=1 adb connect 192.168.0.106:34953
-MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:34953 install -r export/ghostkv-desktop.apk
-MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:34953 shell am start -n com.slothitude.ghostkv/com.godot.game.GodotAppLauncher
+MSYS_NO_PATHCONV=1 adb connect 192.168.0.106:<port>
+MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:<port> install -r export/ghostkv-desktop.apk
+MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:<port> shell am start -n com.slothitude.ghostkv/com.godot.game.GodotAppLauncher
 ```
 Phone ADB port changes — check the current port on the device (Wireless debugging settings).
 
 ### Checking Logs
 ```bash
-# Get the GhostKV PID from latest godot log
-adb logcat -d | grep "I godot" | tail -5
+# Filter GhostKV logs (good grep for most purposes)
+MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:<port> logcat -d | grep -i "godot\|GhostCall\|TelephonyManager\|VoiceManager" | grep -v "Finsky\|MotoExtend\|AudioSystem\|BLASTBuffer" | tail -40
+```
 
-# Filter by PID (replace with actual PID)
-adb logcat -d | grep "PID" | grep -v "Finsky\|MotoExtend\|AudioSystem" | tail -20
+### Remote API Testing
+```bash
+# Send a message to the running app (port 9797)
+MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:<port> shell "curl -s -X POST http://127.0.0.1:9797/send -H 'Content-Type: application/json' -d '{\"message\": \"hello\"}'"
 ```
 
 ## Architecture
@@ -81,16 +85,32 @@ adb logcat -d | grep "PID" | grep -v "Finsky\|MotoExtend\|AudioSystem" | tail -2
 ### Singleton Chain (registered in order)
 1. **AppState** (`core/state.gd`) — global state (token count, step counter)
 2. **SessionManager** (`core/session.gd`) — session persistence to `user://` JSON, settings load/save
-3. **ApiClient** (`core/api_client.gd`) — OpenAI-compatible HTTP API. Has non-streaming (`generate`/`generate_with_retry` via HTTPRequest) and streaming (`generate_stream` via HTTPClient) paths. **Streaming has a body truncation bug on Android** — use non-streaming.
-4. **ToolDispatch** (`core/tool_dispatch.gd`) — routes `Action: tool_name("args")` from LLM output to registered tool handlers. Uses regex `"([^"]*)"` for arg parsing, creates `{"arg0":..., "arg1":...}` dicts.
+3. **ApiClient** (`core/api_client.gd`) — OpenAI-compatible HTTP API. Has non-streaming (`generate`/`generate_with_retry` via HTTPRequest) and streaming (`generate_stream` via HTTPClient) paths. **Streaming has a body truncation bug on Android** — use non-streaming. Signals: `response_received(text, usage)`, `error_occurred(msg)`.
+4. **ToolDispatch** (`core/tool_dispatch.gd`) — routes `Action: tool_name("args")` from LLM output to registered tool handlers. Uses regex `"([^"]*)"` for arg parsing. **Critical**: `_args_to_dict()` returns `{"input": value}` when there's exactly 1 arg (not `arg0`). Tool functions must check `args.get("input", args.get("named_param", args.get("arg0", "")))`.
 5. **MemoryStore** (`core/memory_store.gd`) — graph memory store. JSON persistence at `user://memory.db.json`. 8 tools: remember, recall, relate, search_memory, list_entities, forget, forget_fact, export_memory. `auto_recall()` injects relevant memory into ReactLoop system prompt.
 6. **ReactLoop** (`core/react_loop.gd`) — ReAct loop. Detects `Action: tool_name(args)` in LLM response via regex. If found, dispatches tool, appends observation, loops. If not, emits `answer_ready`.
 7. **Markdown** (`core/markdown.gd`) — Markdown → BBCode converter
-8. **BuiltinTools** (`core/builtin_tools.gd`) — 56 built-in tools including 8 memory tools (via MemoryStore registration), 2 web tools (web_search via SearXNG, web_read), plus ~46 Android-bridged tools (SMS, contacts, camera, etc). On Android, bridges to `GhostKVPlugin` Java singleton; has `OS.execute()` shell fallbacks.
-9. **VoiceManager** (`core/voice_manager.gd`) — Voice pipeline orchestrator. Dictation mode (mic tap → STT → fills input), voice chat mode (continuous STT→LLM→TTS loop), auto-TTS, barge-in detection.
+8. **BuiltinTools** (`core/builtin_tools.gd`) — 57 built-in tools (58 with ghost_call + auto_answer_call). Includes 8 memory tools (via MemoryStore registration), 2 web tools (web_search via SearXNG, web_read), telephony tools, plus ~45 Android-bridged tools. On Android, bridges to `GhostKVPlugin` Java singleton; has `OS.execute()` shell fallbacks. Trust system: `add_trusted_contact()` stores phone→trust level; SMS/calls to non-trusted contacts require confirmation dialog.
+9. **VoiceManager** (`core/voice_manager.gd`) — Voice pipeline orchestrator. Dictation mode (mic tap → STT → fills input), voice chat mode (continuous STT→LLM→TTS loop), auto-TTS, barge-in detection. Has `set_call_mode(agent)` to route STT to GhostCallAgent during calls, and `speak(text)` for direct TTS.
+10. **TelephonyManager** (`core/telephony_manager.gd`) — Android telephony bridge via GhostKVPlugin. Signals: `incoming_call(number)`, `call_started(number)`, `call_ended(duration)`. Methods: `answer_call()`, `end_call()`, `make_call()`, `set_speaker()`, `set_mute()`.
+11. **GhostCallAgent** (`core/ghost_call_agent.gd`) — Autonomous call agent. `initialise()` called after all other singletons ready (after App loaded). Connects TelephonyManager signals, uses VoiceManager for STT/TTS routing, ApiClient for LLM calls. Conversation loop: caller speaks → STT → LLM → TTS → repeat until call ends.
+
+### GhostCallAgent Call Flow
+```
+Incoming call → TelephonyManager.incoming_call → _on_incoming_call()
+  → LLM decides answer/reject (or auto_answer timer)
+  → answer → set_speaker(true) → VoiceManager.set_call_mode(self)
+  → greeting via TTS → STT listening starts
+  → caller speaks → VoiceManager._on_speech_result() → call_mode → _on_caller_speech()
+  → ApiClient.generate() → LLM response → VoiceManager.speak() → repeat
+
+Outgoing → ghost_call tool → TelephonyManager.make_call() → call_started signal → same loop
+
+Call ends → call_ended signal → set_call_mode(null) → set_speaker(false) → transcript emitted
+```
 
 ### Tool Registration Flow
-1. `BuiltinTools._ready()` → registers 56 tools with `ToolDispatch.register_tool(name, "builtin", self)`
+1. `BuiltinTools._ready()` → registers 57 tools with `ToolDispatch.register_tool(name, "builtin", self)`
 2. `MemoryStore._ready()` → registers 8 memory tools with `ToolDispatch.register_tool(name, "memory", self)`
 3. `McpPanel._load_servers()` → connects MCP servers, discovers tools via `MCPClient`, registers with `ToolDispatch`
 4. `ReactLoop.run()` → calls `ToolDispatch.build_tool_descriptions()` → injects all tool descriptions into system prompt
@@ -138,9 +158,10 @@ adb logcat -d | grep "PID" | grep -v "Finsky\|MotoExtend\|AudioSystem" | tail -2
 - **`PackedStringArray` has no `.join()`** — use `separator.join(array)` (String method), not `array.join(separator)`.
 - **`match` requires `_` for default** — bare `return` at the end of a `match` block causes parse error. Use `_:` branch.
 - **No Python-style docstrings** — `"""text"""` is not valid GDScript.
+- **No parenthesized string concatenation** — `var s = ("line1\n" "line2\n")` is a parse error. Use `+` or write as a single string literal.
 - **`await` in `_ready()`** — cooperative async works in GDScript. Multiple coroutines interleave via `await get_tree().process_frame`. An infinite `while/await` loop blocks the function from returning but doesn't block other coroutines.
 - **Android streaming bug**: `HTTPClient` sends truncated request body on Android. Use `generate_with_retry()` (non-streaming HTTPRequest).
-- **Tool arg parsing**: LLM returns `Action: tool("arg1", "arg2")` → regex extracts quoted strings → `{"arg0": "arg1", "arg1": "arg2"}`. Tool functions must check both positional (`arg0`/`arg1`) and named params.
+- **Tool arg parsing — the `input` key**: When ToolDispatch extracts exactly 1 quoted arg from `Action: tool("value")`, `_args_to_dict()` returns `{"input": "value"}` (NOT `{"arg0": "value"}`). With 2+ args it uses `arg0`, `arg1`, etc. Tool functions must check `args.get("input", args.get("named_param", args.get("arg0", "")))` to handle both cases.
 - **Singleton access**: `Engine.get_singleton("Name")` returns `Variant` — cast to `Node`. All singletons registered in `main.gd`.
 - **Windows paths**: `\t` in GDScript strings becomes TAB. Always use forward slashes.
 - **SpeechRecognizer threading**: Must run on Android main thread. Plugin uses `Handler(Looper.getMainLooper()).post()`.
@@ -148,6 +169,8 @@ adb logcat -d | grep "PID" | grep -v "Finsky\|MotoExtend\|AudioSystem" | tail -2
 - **Thinking bubble race**: `queue_free()` is deferred. `chat_view._on_answer()` must `await get_tree().process_frame` before adding assistant bubble.
 - **AAR rebuild**: `jar cf` must use absolute output path on Windows. Never extract from + write to same AAR file.
 - **Settings merge**: `SessionManager.load_settings()` only adds missing keys from defaults — it does NOT overwrite existing keys. To change a default for an already-installed app, the code must actively merge (as done in `mcp_panel.gd:_load_servers()`).
+- **`has_signal()` for dynamic connections** — when connecting signals from singletons that may or may not exist, always check `node.has_signal("signal_name")` before connecting (see GhostCallAgent.initialise()).
+- **`SceneTreeTimer` assignment** — `get_tree().create_timer()` returns `SceneTreeTimer`. Don't store it in a `Timer` var — use `SceneTreeTimer` or `Variant`.
 
 ## Default Settings
 

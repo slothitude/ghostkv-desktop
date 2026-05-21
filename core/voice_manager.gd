@@ -15,6 +15,8 @@ var _react_loop: Node = null
 var _input_bar: Node = null
 var _tts_utterance_id: String = ""
 var _pending_restart: bool = false
+var _call_mode: bool = false
+var _call_agent: Node = null
 
 func _ready() -> void:
 	_state = Engine.get_singleton("AppState")
@@ -54,6 +56,24 @@ func start_listening() -> void:
 	_plugin.startContinuousListening()
 	_is_listening = true
 	listening_changed.emit(true)
+
+# ── Call mode routing ─────────────────────────────────────────────
+
+func set_call_mode(agent: Node) -> void:
+	_call_mode = agent != null
+	_call_agent = agent
+
+func speak(text: String) -> void:
+	if not _plugin:
+		return
+	_connect_plugin_signals()
+	var spoken := _strip_markdown(text)
+	if spoken.is_empty():
+		return
+	_tts_utterance_id = "call_%d" % Time.get_ticks_msec()
+	_is_speaking = true
+	speaking_changed.emit(true)
+	_plugin.speakWithId(spoken, _tts_utterance_id)
 
 # ── Voice chat mode ─────────────────────────────────────────────
 
@@ -128,6 +148,11 @@ func _connect_plugin_signals() -> void:
 func _on_speech_result(text: String) -> void:
 	_is_listening = false
 	listening_changed.emit(false)
+
+	# Call mode: route STT to GhostCallAgent
+	if _call_mode and _call_agent:
+		_call_agent._on_caller_speech(text)
+		return
 
 	if _voice_mode:
 		if _is_speaking:
