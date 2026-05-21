@@ -106,6 +106,13 @@ func _ready() -> void:
 	add_child(_telephony)
 	Engine.register_singleton("TelephonyManager", _telephony)
 
+	# Init TelephonyManager with plugin reference (BuiltinTools already loaded it)
+	var _builtin := Engine.get_singleton("BuiltinTools") as Node
+	if _builtin and _builtin.has_method("get_plugin"):
+		var plugin: RefCounted = _builtin.get_plugin()
+		if plugin:
+			_telephony.initialise(plugin)
+
 	# Ghost call agent (autonomous phone conversations)
 	var _call_agent = Node.new()
 	_call_agent.set_script(load("res://core/ghost_call_agent.gd"))

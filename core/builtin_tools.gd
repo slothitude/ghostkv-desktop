@@ -8,6 +8,9 @@ var _confirm_dialog: Node = null  # Confirmation dialog overlay
 var _trusted_contacts: Dictionary = {}  # phone -> {"name": "...", "trust": "full"|"temp"}
 var _telegram_http: HTTPRequest  # For Telegram Bot API calls
 
+func get_plugin() -> RefCounted:
+	return _plugin
+
 func _ready() -> void:
 	# On Android, the plugin is registered as a singleton by Godot's plugin loader
 	if OS.has_feature("android"):
@@ -51,6 +54,15 @@ func get_trust_level(phone: String) -> Dictionary:
 	var clean := phone.replace(" ", "").replace("-", "")
 	if _trusted_contacts.has(clean):
 		return _trusted_contacts[clean]
+	# Try alternate format: +61XXXXXXXXX ↔ 0XXXXXXXXX
+	if clean.begins_with("+61"):
+		var local := "0" + clean.substr(3)
+		if _trusted_contacts.has(local):
+			return _trusted_contacts[local]
+	elif clean.begins_with("0") and clean.length() == 10:
+		var intl := "+61" + clean.substr(1)
+		if _trusted_contacts.has(intl):
+			return _trusted_contacts[intl]
 	return {"name": "", "trust": "unknown"}
 
 func _lookup_contact_name(phone: String) -> String:

@@ -26,6 +26,8 @@ var _in_call: bool = false
 var _llm_pending: bool = false
 var _llm_last_response: String = ""
 var _answer_timer: SceneTreeTimer = null
+var _is_outgoing: bool = false
+var _call_connected: bool = false
 
 # ── Singleton refs (set in initialise) ────────────────────────────────────────
 var _telephony: Node = null
@@ -53,6 +55,9 @@ func initialise() -> void:
 			_telephony.call_started.connect(_on_call_started)
 		if _telephony.has_signal("call_ended"):
 			_telephony.call_ended.connect(_on_call_ended)
+	# Connect plugin's detailed call state for detecting actual connection
+	if _telephony and _telephony._plugin:
+		_telephony._plugin.connect("on_call_state_changed", _on_call_state_changed)
 
 	_log("initialised — telephony=%s voice=%s api=%s" % [
 		_telephony != null, _voice != null, _api != null
@@ -77,6 +82,8 @@ func ghost_call(phone: String) -> String:
 	if not _telephony:
 		return "Error: TelephonyManager not available"
 	_transcript = []
+	_is_outgoing = true
+	_call_connected = false
 	var result: String = _telephony.make_call(phone)
 	_log("ghost_call(%s) → %s" % [phone, result])
 	return "Agent calling %s: %s" % [phone, result]
@@ -98,7 +105,7 @@ func _on_incoming_call(number: String) -> void:
 		_llm_decide_answer(number)
 
 func _on_call_started(number: String) -> void:
-	_log("Call active with %s" % number)
+	_log("Call started (may still be dialing) with %s" % number)
 	_in_call = true
 	_active_call_id = _get_active_call_id()
 
@@ -110,8 +117,23 @@ func _on_call_started(number: String) -> void:
 	if _voice:
 		_voice.set_call_mode(self)
 
-	# Greet the caller
-	var greeting: String = "Hello, I'm handling calls for the user right now. How can I help you?"
+	# For incoming calls, greet immediately (call is already connected)
+	# For outgoing calls, wait for on_call_state_changed "active"
+	if not _is_outgoing:
+		_greet_caller()
+
+func _on_call_state_changed(info: String) -> void:
+	# info format: "callId:state" (e.g. "call_123:active", "call_123:dialing")
+	_log("Call state changed: %s" % info)
+	if _is_outgoing and not _call_connected:
+		var parts := info.split(":")
+		if parts.size() >= 2 and parts[1] == "active":
+			_call_connected = true
+			_log("Outgoing call connected — greeting caller")
+			_greet_caller()
+
+func _greet_caller() -> void:
+	var greeting: String = "Hello, I'm the Ghost in Aaron's phone. If you're happy to talk to a Ghost in the machine, how can I help you?"
 	_transcript.append({"role": "assistant", "content": greeting})
 	_speak(greeting)
 
@@ -121,6 +143,8 @@ func _on_call_ended(duration_sec: int) -> void:
 	_active_call_id = ""
 	_llm_pending = false
 	_llm_last_response = ""
+	_is_outgoing = false
+	_call_connected = false
 
 	# Restore voice routing to normal
 	if _voice:
