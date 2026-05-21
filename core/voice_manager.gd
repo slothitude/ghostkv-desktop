@@ -175,6 +175,11 @@ func _on_speech_error(msg: String) -> void:
 	_is_listening = false
 	listening_changed.emit(false)
 
+	# Call mode: route silence/errors to agent
+	if _call_mode and _call_agent:
+		_call_agent._on_caller_silence()
+		return
+
 	if _voice_mode:
 		if msg == "NO_MATCH":
 			# Silence detected (VAD) — restart listening after brief pause

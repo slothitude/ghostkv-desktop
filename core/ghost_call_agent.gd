@@ -28,6 +28,12 @@ var _llm_last_response: String = ""
 var _answer_timer: SceneTreeTimer = null
 var _is_outgoing: bool = false
 var _call_connected: bool = false
+var _voicemail_timer: SceneTreeTimer = null
+var _caller_spoke: bool = false
+var _outgoing_speech_count: int = 0
+var _silence_after_speech: bool = false
+var _listening_active: bool = false
+var _hangup_pending: bool = false
 
 # ── Singleton refs (set in initialise) ────────────────────────────────────────
 var _telephony: Node = null
@@ -84,6 +90,8 @@ func ghost_call(phone: String) -> String:
 	_transcript = []
 	_is_outgoing = true
 	_call_connected = false
+	_caller_spoke = false
+	_outgoing_speech_count = 0
 	var result: String = _telephony.make_call(phone)
 	_log("ghost_call(%s) → %s" % [phone, result])
 	return "Agent calling %s: %s" % [phone, result]
@@ -129,13 +137,54 @@ func _on_call_state_changed(info: String) -> void:
 		var parts := info.split(":")
 		if parts.size() >= 2 and parts[1] == "active":
 			_call_connected = true
-			_log("Outgoing call connected — greeting caller")
-			_greet_caller()
+			# Speaker ON via InCallService (only works after call is active)
+			if _telephony:
+				_telephony.set_speaker(true)
+			_log("Outgoing call connected — listening for caller or voicemail")
+			_caller_spoke = false
+			_outgoing_speech_count = 0
+			_listening_active = false
+			# Wait 2s before starting STT (avoid silence from connection setup)
+			get_tree().create_timer(2.0).timeout.connect(func():
+				if not _in_call:
+					return
+				_listening_active = true
+				if _voice:
+					_voice.start_listening()
+			)
+			# Safety timeout: if still going after 30s, leave message anyway
+			_voicemail_timer = get_tree().create_timer(30.0)
+			_voicemail_timer.timeout.connect(_on_voicemail_timeout)
 
 func _greet_caller() -> void:
 	var greeting: String = "Hello, I'm the Ghost in Aaron's phone. If you're happy to talk to a Ghost in the machine, how can I help you?"
 	_transcript.append({"role": "assistant", "content": greeting})
 	_speak(greeting)
+
+func _on_voicemail_timeout() -> void:
+	if not _in_call or _caller_spoke:
+		return
+	_log("Voicemail safety timeout — leaving message")
+	_leave_voicemail()
+
+func _leave_voicemail() -> void:
+	var msg: String = "Hi, this is Aaron's Ghost phone assistant. Aaron will call you back as soon as he can. Thanks, bye!"
+	_transcript.append({"role": "assistant", "content": "[voicemail] " + msg})
+	_speak(msg)
+	# Hang up after TTS finishes (~8s)
+	_hangup_pending = true
+	get_tree().create_timer(8.0).timeout.connect(_do_hangup)
+
+func _cancel_voicemail_timer() -> void:
+	_voicemail_timer = null
+
+func _do_hangup() -> void:
+	if not _hangup_pending or not _in_call:
+		return
+	_hangup_pending = false
+	_log("Auto-hanging up after voicemail")
+	if _telephony:
+		_telephony.end_call()
 
 func _on_call_ended(duration_sec: int) -> void:
 	_log("Call ended after %ds" % duration_sec)
@@ -145,6 +194,11 @@ func _on_call_ended(duration_sec: int) -> void:
 	_llm_last_response = ""
 	_is_outgoing = false
 	_call_connected = false
+	_caller_spoke = false
+	_voicemail_timer = null
+	_outgoing_speech_count = 0
+	_listening_active = false
+	_hangup_pending = false
 
 	# Restore voice routing to normal
 	if _voice:
@@ -168,8 +222,30 @@ func _on_call_ended(duration_sec: int) -> void:
 
 ## Called by VoiceManager when call_mode is active.
 func _on_caller_speech(text: String) -> void:
-	if not _in_call or text.strip_edges().is_empty():
+	if not _in_call or not _listening_active or text.strip_edges().is_empty():
 		return
+
+	# Outgoing call: first speech could be voicemail greeting or person saying hello
+	# Short text (1-3 words like "hello") = likely a person. Greet them.
+	# Longer text = voicemail greeting. Keep listening.
+	if _is_outgoing and not _caller_spoke:
+		_outgoing_speech_count += 1
+		var word_count: int = text.split(" ").size()
+		_log("Outgoing speech #%d (%d words): %s" % [_outgoing_speech_count, word_count, text])
+		if word_count <= 4:
+			# Short greeting — it's a person
+			_log("Short greeting detected — greeting caller")
+			_caller_spoke = true
+			_cancel_voicemail_timer()
+			_greet_caller()
+		else:
+			# Voicemail greeting — keep listening silently
+			if _voice:
+				_voice.start_listening()
+		return
+
+	# Person is talking (after initial greeting exchange) — normal conversation
+	_cancel_voicemail_timer()
 
 	_log("Caller said: %s" % text)
 	_transcript.append({"role": "user", "content": text})
@@ -182,6 +258,28 @@ func _on_caller_speech(text: String) -> void:
 
 	_transcript.append({"role": "assistant", "content": reply})
 	_speak(reply)
+
+## Called by VoiceManager when STT detects silence (NO_MATCH) or error during call.
+func _on_caller_silence() -> void:
+	if not _in_call or not _listening_active:
+		return
+
+	if _is_outgoing and not _caller_spoke:
+		# Silence after voicemail greeting — this is the moment after the beep
+		if _outgoing_speech_count > 0:
+			_log("Silence after %d speech segments — leaving voicemail" % _outgoing_speech_count)
+			_cancel_voicemail_timer()
+			_leave_voicemail()
+		else:
+			# No speech yet — keep listening, don't greet
+			_log("Silence before any speech — restarting listener")
+			if _voice:
+				_voice.start_listening()
+		return
+
+	# Normal conversation — restart listening
+	if _voice:
+		_voice.start_listening()
 
 # ════════════════════════════════════════════════════════════════════════════════
 # LLM CALLS (async via ApiClient signals)

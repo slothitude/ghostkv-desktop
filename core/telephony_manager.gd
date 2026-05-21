@@ -86,11 +86,11 @@ func set_mute(mute: bool) -> String:
 		return "error:no_plugin"
 	return _plugin.setMicMute(mute)
 
-## Toggle speakerphone.
+## Toggle speakerphone. Uses InCallService audio routing when available.
 func set_speaker(on: bool) -> String:
 	if not _is_android or _plugin == null:
 		return "error:no_plugin"
-	return _plugin.setSpeakerphone(on)
+	return _plugin.setAudioRoute("SPEAKER" if on else "EARPIECE")
 
 ## Start listening for call state changes.
 func start_monitor() -> String:

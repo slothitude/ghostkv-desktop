@@ -15,6 +15,27 @@
             android:name="org.godotengine.plugin.v2.GhostKVPlugin"
             android:value="com.slothitude.ghostkv.GhostKVPlugin" />
 
+        <!-- Dialer intent filter so Android lists GhostKV as a Phone app option -->
+        <activity-alias
+            android:name="com.slothitude.ghostkv.DialerActivity"
+            android:exported="true"
+            android:targetActivity="com.godot.game.GodotApp">
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="tel" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.CALL" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="tel" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
+
         <service
             android:name=".GhostKVBgService"
             android:enabled="true"
