@@ -360,4 +360,4 @@ func _get_active_call_id() -> String:
 	return match.get_string(1) if match else ""
 
 func _log(msg: String) -> void:
-	print("[GhostCallAgent] %s" % msg)
+	push_warning("[GhostCallAgent] %s" % msg)
