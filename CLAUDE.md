@@ -67,9 +67,14 @@ Phone ADB port changes — check the current port on the device (Wireless debugg
 
 ### Checking Logs
 ```bash
-# Filter GhostKV logs (good grep for most purposes)
-MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:<port> logcat -d | grep -i "godot\|GhostCall\|TelephonyManager\|VoiceManager" | grep -v "Finsky\|MotoExtend\|AudioSystem\|BLASTBuffer" | tail -40
+# GhostCallAgent + telephony logs (push_warning shows in logcat)
+MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:<port> logcat -d | grep -i "GhostCallAgent\|GhostInCall\|TelephonyManager\|VoiceManager" | tail -40
+
+# Broader app logs
+MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:<port> logcat -d | grep -i "godot\|ghostkv\|Ghost" | grep -v "Finsky\|MotoExtend\|BLASTBuffer\|AppOps" | tail -40
 ```
+
+**ADB port instability**: Phone wireless debugging port changes frequently (screen off/on, app install). Always need fresh `adb connect 192.168.0.106:<port>` before operations.
 
 ### Remote API Testing
 ```bash
@@ -92,8 +97,8 @@ MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:<port> shell "curl -s -X POST http://127
 7. **Markdown** (`core/markdown.gd`) — Markdown → BBCode converter
 8. **BuiltinTools** (`core/builtin_tools.gd`) — 57 built-in tools (58 with ghost_call + auto_answer_call). Includes 8 memory tools (via MemoryStore registration), 2 web tools (web_search via SearXNG, web_read), telephony tools, plus ~45 Android-bridged tools. On Android, bridges to `GhostKVPlugin` Java singleton; has `OS.execute()` shell fallbacks. Trust system: `add_trusted_contact()` stores phone→trust level; SMS/calls to non-trusted contacts require confirmation dialog.
 9. **VoiceManager** (`core/voice_manager.gd`) — Voice pipeline orchestrator. Dictation mode (mic tap → STT → fills input), voice chat mode (continuous STT→LLM→TTS loop), auto-TTS, barge-in detection. Has `set_call_mode(agent)` to route STT to GhostCallAgent during calls, and `speak(text)` for direct TTS.
-10. **TelephonyManager** (`core/telephony_manager.gd`) — Android telephony bridge via GhostKVPlugin. Signals: `incoming_call(number)`, `call_started(number)`, `call_ended(duration)`. Methods: `answer_call()`, `end_call()`, `make_call()`, `set_speaker()`, `set_mute()`.
-11. **GhostCallAgent** (`core/ghost_call_agent.gd`) — Autonomous call agent. `initialise()` called after all other singletons ready (after App loaded). Connects TelephonyManager signals, uses VoiceManager for STT/TTS routing, ApiClient for LLM calls. Conversation loop: caller speaks → STT → LLM → TTS → repeat until call ends.
+10. **TelephonyManager** (`core/telephony_manager.gd`) — Android telephony bridge via GhostKVPlugin. Signals: `incoming_call(number)`, `call_started(number)`, `call_ended(duration)`. Methods: `answer_call()`, `end_call()`, `make_call()`, `set_speaker()`, `set_mute()`. `set_speaker()` uses `InCallService.setAudioRoute()` (NOT `AudioManager.setSpeakerphoneOn()` which gets overridden by Telecom).
+11. **GhostCallAgent** (`core/ghost_call_agent.gd`) — Autonomous call agent. `initialise()` called after all other singletons ready (after App loaded). Connects TelephonyManager signals + plugin's `on_call_state_changed` for connection detection. Uses VoiceManager for STT/TTS routing, ApiClient for LLM calls. Logs use `push_warning()` (visible in Android logcat — `print()` is invisible).
 
 ### GhostCallAgent Call Flow
 ```
@@ -104,10 +109,30 @@ Incoming call → TelephonyManager.incoming_call → _on_incoming_call()
   → caller speaks → VoiceManager._on_speech_result() → call_mode → _on_caller_speech()
   → ApiClient.generate() → LLM response → VoiceManager.speak() → repeat
 
-Outgoing → ghost_call tool → TelephonyManager.make_call() → call_started signal → same loop
+Outgoing → ghost_call tool → TelephonyManager.make_call()
+  → InCallService on_call_state_changed "active" (NOT call_started — that fires on OFFHOOK/dialing)
+  → set_speaker(true) via InCallService.setAudioRoute()
+  → wait 2s → start STT
+  → long speech = voicemail greeting → listen silently → silence = beep → leave message → auto-hangup 8s
+  → short speech (≤4 words) = person → greet them → normal conversation loop
 
 Call ends → call_ended signal → set_call_mode(null) → set_speaker(false) → transcript emitted
 ```
+
+### Default Dialer Requirement
+GhostKV **must be set as the default Phone app** on Android for the InCallService to bind. Without it:
+- Telecom skips binding `GhostInCallService` (`"Skipping binding to ... isRequestedtype:false"`)
+- `setAudioRoute()` returns `"error:service_not_bound"`, falls back to `AudioManager.setSpeakerphoneOn()` which gets overridden
+- Call state callbacks don't fire
+The app declares `ACTION_DIAL` intent filters via an `activity-alias` in `android_plugin/AndroidManifest.xml` targeting `com.godot.game.GodotApp`, making it appear as a dialer option in system settings.
+
+### Voicemail vs Person Detection (Outgoing Calls)
+1. Call connects → wait 2s → start STT
+2. STT silence with no speech yet → restart listening (don't greet)
+3. Short speech (≤4 words, e.g. "Hello?") → person → greet them → normal conversation
+4. Long speech (>4 words, e.g. "Hi, you've reached...") → voicemail greeting → keep listening silently
+5. Silence after long speech → voicemail beep done → leave message → auto-hangup after 8s
+6. Safety timeout: 30s after call connects, leave message regardless
 
 ### Tool Registration Flow
 1. `BuiltinTools._ready()` → registers 57 tools with `ToolDispatch.register_tool(name, "builtin", self)`
@@ -171,6 +196,10 @@ Call ends → call_ended signal → set_call_mode(null) → set_speaker(false) �
 - **Settings merge**: `SessionManager.load_settings()` only adds missing keys from defaults — it does NOT overwrite existing keys. To change a default for an already-installed app, the code must actively merge (as done in `mcp_panel.gd:_load_servers()`).
 - **`has_signal()` for dynamic connections** — when connecting signals from singletons that may or may not exist, always check `node.has_signal("signal_name")` before connecting (see GhostCallAgent.initialise()).
 - **`SceneTreeTimer` assignment** — `get_tree().create_timer()` returns `SceneTreeTimer`. Don't store it in a `Timer` var — use `SceneTreeTimer` or `Variant`.
+- **`print()` invisible in Android logcat** — use `push_warning()` instead. It writes to logcat at warn level and is grep-able.
+- **InCallService audio routing** — `AudioManager.setSpeakerphoneOn()` gets overridden by Telecom framework within milliseconds. Always use `InCallService.setAudioRoute(ROUTE_SPEAKER)` via the plugin's `setAudioRoute("SPEAKER")` method. Only works when app is default dialer.
+- **Outgoing call OFFHOOK vs ACTIVE** — `TelephonyManager.on_call_started` fires immediately on OFFHOOK (when dialing starts). For outgoing calls, wait for `on_call_state_changed` with state "active" (InCallService) to know when the callee actually picks up.
+- **Phone number format normalization** — Australian numbers need +61↔0 prefix matching. Trust store may have `+61439720202` but LLM sends `0439720262`. `get_trust_level()` must try both formats.
 
 ## Default Settings
 
