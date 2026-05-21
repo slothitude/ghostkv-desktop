@@ -921,6 +921,23 @@ public class GhostKVPlugin extends GodotPlugin implements GhostTelephony.Telepho
         return _telephony != null && _telephony.isInCallServiceBound();
     }
 
+    // ── Logging ─────────────────────────────────────────────────────
+
+    /** Log to Android logcat from GDScript.
+     * Level: "d"=debug, "i"=info, "w"=warn, "e"=error. Default "i".
+     */
+    @UsedByGodot
+    public void logToAndroid(String level, String tag, String message) {
+        String t = (tag != null && !tag.isEmpty()) ? tag : "GhostKV";
+        String m = (message != null) ? message : "";
+        switch (level != null ? level.toLowerCase() : "i") {
+            case "d": Log.d(t, m); break;
+            case "w": Log.w(t, m); break;
+            case "e": Log.e(t, m); break;
+            default:  Log.i(t, m); break;
+        }
+    }
+
     // ── TelephonyHost interface implementation ─────────────────────────
 
     @Override

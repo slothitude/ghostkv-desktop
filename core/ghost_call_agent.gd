@@ -360,4 +360,9 @@ func _get_active_call_id() -> String:
 	return match.get_string(1) if match else ""
 
 func _log(msg: String) -> void:
+	if Engine.has_singleton("GhostKVPlugin"):
+		var plugin = Engine.get_singleton("GhostKVPlugin")
+		if plugin:
+			plugin.logToAndroid("i", "GhostCallAgent", msg)
+			return
 	push_warning("[GhostCallAgent] %s" % msg)
