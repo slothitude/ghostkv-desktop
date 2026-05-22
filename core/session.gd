@@ -98,6 +98,6 @@ func _default_settings() -> Dictionary:
 		"telegram_chat_id": "",
 		"stt_api_url": "http://100.84.161.63:5000/v1/audio/transcriptions",
 		"memory_auto_recall": true,
-		"tool_selection_max": 50,
+		"tool_selection_max": 25,
 		"tool_selection_enabled": true
 	}

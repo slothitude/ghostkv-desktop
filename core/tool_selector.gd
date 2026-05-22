@@ -1,15 +1,15 @@
 extends Node
 
 ## Smart tool selector — categorizes tools, builds keyword index, scores per query.
-## Sits between ReactLoop and ToolDispatch to reduce 410+ tool prompts to ~30-50.
+## Sits between ReactLoop and ToolDispatch to reduce 410+ tool prompts to ~15-25.
 
-# Category keyword maps: category -> trigger words
+# Category keyword maps: category -> trigger words (only strong signals)
 const _CATEGORY_KEYWORDS: Dictionary = {
 	"communication": ["call", "sms", "message", "phone", "contact", "text", "whatsapp", "telegram", "dial"],
-	"system": ["battery", "wifi", "location", "device", "bluetooth", "nfc", "screen", "brightness", "volume", "network"],
+	"system": ["battery", "wifi", "location", "bluetooth", "nfc", "screen", "brightness", "volume", "network"],
 	"media": ["voice", "camera", "music", "photo", "speak", "listen", "tts", "stt", "audio", "media", "flashlight"],
-	"files": ["file", "read", "write", "directory", "folder", "open", "url", "clipboard", "share"],
-	"device": ["app", "alarm", "calendar", "notification", "timer", "wake", "command", "run", "python", "toast", "vibrate"]
+	"files": ["file", "directory", "folder", "clipboard"],
+	"device": ["app", "alarm", "calendar", "notification", "timer", "wake"]
 }
 
 # Tools that are ALWAYS included
@@ -18,6 +18,19 @@ const _CORE_TOOLS: PackedStringArray = [
 	"forget", "forget_fact", "export_memory",
 	"calculator", "web_search", "web_read"
 ]
+
+# Common stop words to skip during scoring
+const _STOP_WORDS: Dictionary = {
+	"what": true, "whats": true, "what's": true, "is": true, "my": true,
+	"the": true, "a": true, "an": true, "me": true, "to": true,
+	"for": true, "of": true, "and": true, "in": true, "on": true,
+	"at": true, "it": true, "this": true, "that": true, "can": true,
+	"how": true, "do": true, "does": true, "tell": true, "get": true,
+	"show": true, "please": true, "i": true, "you": true, "are": true,
+	"was": true, "been": true, "have": true, "has": true, "had": true,
+	"will": true, "would": true, "could": true, "should": true, "about": true,
+	"level": true, "status": true, "info": true, "current": true, "go": true,
+}
 
 # Tool -> category mapping for builtins
 var _builtin_categories: Dictionary = {}
@@ -28,8 +41,10 @@ var _tool_descriptions: Dictionary = {}
 # Tool name -> tokens (split by _)
 var _tool_name_tokens: Dictionary = {}
 
-var _max_tools: int = 50
+var _max_tools: int = 25
 var _enabled: bool = true
+# Minimum score to be included (prevents weak matches)
+var _min_score: int = 30
 
 
 func _ready() -> void:
@@ -70,7 +85,7 @@ func _ready() -> void:
 	var session := Engine.get_singleton("SessionManager") as Node
 	if session:
 		var settings: Dictionary = session.load_settings()
-		_max_tools = settings.get("tool_selection_max", 50)
+		_max_tools = settings.get("tool_selection_max", 25)
 		_enabled = settings.get("tool_selection_enabled", true)
 
 
@@ -124,10 +139,17 @@ func select_tools(query: String) -> PackedStringArray:
 		return []
 
 	var query_lower := query.to_lower()
+	# Filter out stop words and short words
 	var query_words: PackedStringArray = []
 	for w in query_lower.split(" "):
-		if w.length() > 1:
-			query_words.append(w)
+		var stripped: String = w.strip_edges()
+		# Remove punctuation manually
+		var cleaned: String = ""
+		for c in stripped:
+			if (c >= "a" and c <= "z") or (c >= "0" and c <= "9"):
+				cleaned += c
+		if cleaned.length() >= 2 and not _STOP_WORDS.has(cleaned):
+			query_words.append(cleaned)
 
 	var scores: Dictionary = {}  # tool_name -> score
 	var dispatch := Engine.get_singleton("ToolDispatch") as Node
@@ -135,6 +157,21 @@ func select_tools(query: String) -> PackedStringArray:
 		return []
 
 	var all_tools: Dictionary = dispatch.get_registered_tools()
+
+	# Find which categories are directly relevant to query words
+	var matched_categories: Dictionary = {}  # category -> relevance score
+	for qw in query_words:
+		for cat in _CATEGORY_KEYWORDS:
+			var keywords: Array = _CATEGORY_KEYWORDS[cat]
+			for kw in keywords:
+				if qw == kw:
+					if not matched_categories.has(cat):
+						matched_categories[cat] = 0
+					matched_categories[cat] += 2
+				elif qw.begins_with(kw) and kw.length() >= 3:
+					if not matched_categories.has(cat):
+						matched_categories[cat] = 0
+					matched_categories[cat] += 1
 
 	for tool_name in all_tools:
 		var score: int = 0
@@ -144,33 +181,33 @@ func select_tools(query: String) -> PackedStringArray:
 			scores[tool_name] = 1000
 			continue
 
-		# Tool name token match (+50 per match)
+		# Tool name token match — EXACT only (+80 per exact match)
 		if _tool_name_tokens.has(tool_name):
 			var tokens: PackedStringArray = _tool_name_tokens[tool_name]
 			for qw in query_words:
 				for t in tokens:
-					if t == qw or t.begins_with(qw) or qw.begins_with(t):
-						if t.length() >= 2 and qw.length() >= 2:
-							score += 50
+					if t == qw and t.length() >= 2:
+						score += 80
+					# Allow prefix match only for tokens >= 4 chars
+					elif t.length() >= 4 and qw.length() >= 4 and (t.begins_with(qw) or qw.begins_with(t)):
+						score += 40
 
-		# Description substring match (+20 per match)
+		# Description substring match (+15 per unique word match, capped at +45)
 		var desc: String = _tool_descriptions.get(tool_name, "").to_lower()
+		var desc_matches: int = 0
 		if not desc.is_empty():
 			for qw in query_words:
 				if qw in desc:
-					score += 20
+					desc_matches += 1
+			score += mini(desc_matches, 3) * 15
 
-		# Category keyword match (+30)
+		# Category match — only if category was directly triggered by query words (+20)
 		var category: String = _get_category(tool_name)
-		if not category.is_empty() and _CATEGORY_KEYWORDS.has(category):
-			var keywords: Array = _CATEGORY_KEYWORDS[category]
-			for qw in query_words:
-				for kw in keywords:
-					if qw == kw or qw.begins_with(kw) or kw.begins_with(qw):
-						score += 30
-						break
+		if not category.is_empty() and matched_categories.has(category):
+			score += 20 * matched_categories[category]
 
-		if score > 0:
+		# Only include if above minimum threshold
+		if score >= _min_score:
 			scores[tool_name] = score
 
 	# Sort by score descending, take top N
@@ -226,7 +263,7 @@ func _best_category(query_words: PackedStringArray) -> String:
 		var cat_score: int = 0
 		for qw in query_words:
 			for kw in keywords:
-				if qw == kw or qw.begins_with(kw) or kw.begins_with(qw):
+				if qw == kw or (qw.length() >= 3 and kw.length() >= 3 and (qw.begins_with(kw) or kw.begins_with(qw))):
 					cat_score += 1
 		if cat_score > best_score:
 			best_score = cat_score
