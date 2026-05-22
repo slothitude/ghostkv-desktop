@@ -59,9 +59,13 @@ cp build/compile/GhostKVPlugin.aar android/plugins/
 
 ### ADB / Phone Testing
 ```bash
+# Via Tailscale (works from anywhere)
+MSYS_NO_PATHCONV=1 adb connect 100.107.255.34:<port>
+# Via LAN (faster, same network only)
 MSYS_NO_PATHCONV=1 adb connect 192.168.0.106:<port>
-MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:<port> install -r export/ghostkv-desktop.apk
-MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:<port> shell am start -n com.slothitude.ghostkv/com.godot.game.GodotAppLauncher
+
+MSYS_NO_PATHCONV=1 adb -s 100.107.255.34:<port> install -r export/ghostkv-desktop.apk
+MSYS_NO_PATHCONV=1 adb -s 100.107.255.34:<port> shell am start -n com.slothitude.ghostkv/com.godot.game.GodotAppLauncher
 ```
 Phone ADB port changes — check the current port on the device (Wireless debugging settings).
 
@@ -92,10 +96,11 @@ MSYS_NO_PATHCONV=1 adb -s 192.168.0.106:<port> shell "curl -s -X POST http://127
 2. **SessionManager** (`core/session.gd`) — session persistence to `user://` JSON, settings load/save
 3. **ApiClient** (`core/api_client.gd`) — OpenAI-compatible HTTP API. Has non-streaming (`generate`/`generate_with_retry` via HTTPRequest) and streaming (`generate_stream` via HTTPClient) paths. **Streaming has a body truncation bug on Android** — use non-streaming. Signals: `response_received(text, usage)`, `error_occurred(msg)`.
 4. **ToolDispatch** (`core/tool_dispatch.gd`) — routes `Action: tool_name("args")` from LLM output to registered tool handlers. Uses regex `"([^"]*)"` for arg parsing. **Critical**: `_args_to_dict()` returns `{"input": value}` when there's exactly 1 arg (not `arg0`). Tool functions must check `args.get("input", args.get("named_param", args.get("arg0", "")))`.
-5. **MemoryStore** (`core/memory_store.gd`) — graph memory store. JSON persistence at `user://memory.db.json`. 8 tools: remember, recall, relate, search_memory, list_entities, forget, forget_fact, export_memory. `auto_recall()` injects relevant memory into ReactLoop system prompt.
-6. **ReactLoop** (`core/react_loop.gd`) — ReAct loop. Detects `Action: tool_name(args)` in LLM response via regex. If found, dispatches tool, appends observation, loops. If not, emits `answer_ready`.
-7. **Markdown** (`core/markdown.gd`) — Markdown → BBCode converter
-8. **BuiltinTools** (`core/builtin_tools.gd`) — 57 built-in tools (58 with ghost_call + auto_answer_call). Includes 8 memory tools (via MemoryStore registration), 2 web tools (web_search via SearXNG, web_read), telephony tools, plus ~45 Android-bridged tools. On Android, bridges to `GhostKVPlugin` Java singleton; has `OS.execute()` shell fallbacks. Trust system: `add_trusted_contact()` stores phone→trust level; SMS/calls to non-trusted contacts require confirmation dialog.
+5. **ToolSelector** (`core/tool_selector.gd`) — smart tool filtering. Categorizes tools into core/communication/system/media/files/device/mcp groups, builds keyword index, scores tools per query. Returns ~30-50 relevant tools instead of 410+. Core tools (memory + calculator + web) always included. Falls back to all tools if disabled.
+6. **MemoryStore** (`core/memory_store.gd`) — graph memory store. JSON persistence at `user://memory.db.json`. 8 tools: remember, recall, relate, search_memory, list_entities, forget, forget_fact, export_memory. `auto_recall()` injects relevant memory into ReactLoop system prompt.
+7. **ReactLoop** (`core/react_loop.gd`) — ReAct loop. Detects `Action: tool_name(args)` in LLM response via regex. If found, dispatches tool, appends observation, loops. If not, emits `answer_ready`. Uses ToolSelector to inject only relevant tool descriptions.
+8. **Markdown** (`core/markdown.gd`) — Markdown → BBCode converter
+9. **BuiltinTools** (`core/builtin_tools.gd`) — 57 built-in tools (58 with ghost_call + auto_answer_call). Includes 8 memory tools (via MemoryStore registration), 2 web tools (web_search via SearXNG, web_read), telephony tools, plus ~45 Android-bridged tools. On Android, bridges to `GhostKVPlugin` Java singleton; has `OS.execute()` shell fallbacks. Trust system: `add_trusted_contact()` stores phone→trust level; SMS/calls to non-trusted contacts require confirmation dialog.
 9. **VoiceManager** (`core/voice_manager.gd`) — Voice pipeline orchestrator. Dictation mode (mic tap → STT → fills input), voice chat mode (continuous STT→LLM→TTS loop), auto-TTS, barge-in detection. Has `set_call_mode(agent)` to route STT to GhostCallAgent during calls, and `speak(text)` for direct TTS.
 10. **TelephonyManager** (`core/telephony_manager.gd`) — Android telephony bridge via GhostKVPlugin. Signals: `incoming_call(number)`, `call_started(number)`, `call_ended(duration)`. Methods: `answer_call()`, `end_call()`, `make_call()`, `set_speaker()`, `set_mute()`. `set_speaker()` uses `InCallService.setAudioRoute()` (NOT `AudioManager.setSpeakerphoneOn()` which gets overridden by Telecom).
 11. **GhostCallAgent** (`core/ghost_call_agent.gd`) — Autonomous call agent. `initialise()` called after all other singletons ready (after App loaded). Connects TelephonyManager signals + plugin's `on_call_state_changed` for connection detection. Uses VoiceManager for STT/TTS routing, ApiClient for LLM calls. Logs use `push_warning()` (visible in Android logcat — `print()` is invisible).
@@ -138,7 +143,8 @@ The app declares `ACTION_DIAL` intent filters via an `activity-alias` in `androi
 1. `BuiltinTools._ready()` → registers 57 tools with `ToolDispatch.register_tool(name, "builtin", self)`
 2. `MemoryStore._ready()` → registers 8 memory tools with `ToolDispatch.register_tool(name, "memory", self)`
 3. `McpPanel._load_servers()` → connects MCP servers, discovers tools via `MCPClient`, registers with `ToolDispatch`
-4. `ReactLoop.run()` → calls `ToolDispatch.build_tool_descriptions()` → injects all tool descriptions into system prompt
+4. `ToolDispatch.register_tool()` → notifies `ToolSelector.on_tool_registered()` (caches name tokens, description, category)
+5. `ReactLoop.run()` → calls `ToolSelector.select_tools(query)` → `ToolDispatch.build_tool_descriptions_filtered()` → injects ~30-50 relevant tool descriptions into system prompt
 
 ### MCP Client (SSE Transport)
 `core/mcp_client.gd` — uses low-level `HTTPClient` (not `HTTPRequest`) for SSE handshake because `HTTPRequest` hangs on streaming responses. Flow:
@@ -151,8 +157,8 @@ The app declares `ACTION_DIAL` intent filters via an `activity-alias` in `androi
 **MCP Panel** (`ui/mcp_panel.gd`) — auto-connects default servers from `_default_settings()`. Merges defaults into saved server list. Calls `_load_servers()` directly in `_ready()` (settings already loaded before UI created).
 
 ### Web Tools (Builtin, no MCP dependency)
-- `web_search` — hits SearXNG at `http://192.168.0.33:8888/search?q=...&format=json`, returns top 5 results
-- `web_read` — fetches page via web-reader at `http://192.168.0.33:8003/read?url=...`, truncates to 4000 chars
+- `web_search` — hits SearXNG at `http://100.119.172.102:8888/search?q=...&format=json` (Oracle Tailscale), returns top 5 results
+- `web_read` — fetches page via web-reader at `http://100.84.161.63:8003/read?url=...` (Lappy Tailscale), truncates to 4000 chars
 
 ### Memory Store (Graph Memory)
 - **Storage**: `user://memory.db.json` — entity name (lowercased) as dict key for O(1) lookup
@@ -205,7 +211,16 @@ The app declares `ACTION_DIAL` intent filters via an `activity-alias` in `androi
 
 Key defaults from `session.gd:_default_settings()`:
 - API: `https://api.z.ai/api/coding/paas/v4/chat/completions`, model `glm-5.1`
-- MCP servers: `[{"name": "web-reader", "url": "http://192.168.0.33:8003/sse"}]`
-- SearXNG: `http://192.168.0.33:8888` (hardcoded in builtin_tools web_search)
+- MCP servers: `[{"name": "web-reader", "url": "http://100.84.161.63:8003/sse"}, {"name": "alphabetty", "url": "https://alphabetty.ddns.net/mcp/sse"}]`
+- SearXNG: `http://100.119.172.102:8888` (Oracle Tailscale, hardcoded in builtin_tools web_search)
+- STT: `http://100.84.161.63:5000/v1/audio/transcriptions` (Lappy Tailscale)
 - Memory auto-recall: `true`
 - Remote API port: `9797`
+- Tool selection: `tool_selection_enabled: true`, `tool_selection_max: 50`
+
+### Tailscale IPs
+| Device | Tailscale IP | Services |
+|--------|-------------|----------|
+| Oracle | `100.119.172.102` | SearXNG (:8888), Alphabetty (HTTPS via DDNS) |
+| Lappy | `100.84.161.63` | web-reader (:8003), STT (:5000), Ollama (:11434) |
+| Phone | `100.107.255.34` | ADB (port changes) |

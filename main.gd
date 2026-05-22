@@ -63,6 +63,13 @@ func _ready() -> void:
 	add_child(_tool_dispatch)
 	Engine.register_singleton("ToolDispatch", _tool_dispatch)
 
+	# Tool selector (smart filtering of 410+ tools to ~30-50 per query)
+	var _tool_selector = Node.new()
+	_tool_selector.set_script(load("res://core/tool_selector.gd"))
+	_tool_selector.name = "ToolSelector"
+	add_child(_tool_selector)
+	Engine.register_singleton("ToolSelector", _tool_selector)
+
 	# Memory store (graph memory)
 	_memory_store = Node.new()
 	_memory_store.set_script(load("res://core/memory_store.gd"))

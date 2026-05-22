@@ -23,6 +23,7 @@ var _running: bool = false
 var _action_regex: RegEx
 var _tool_call_regex: RegEx
 var _reasoning_tool_regex: RegEx
+var _selected_tools: PackedStringArray = []
 
 # Streaming accumulation
 var _stream_text_buffer: String = ""
@@ -57,10 +58,26 @@ func run(question: String, history: Array = []) -> void:
 	# Build system prompt with tool descriptions
 	var full_prompt := _system_prompt
 	if _tool_dispatch and _tool_dispatch.has_method("build_tool_descriptions"):
-		var tool_desc: String = _tool_dispatch.build_tool_descriptions()
-		if not tool_desc.is_empty():
-			full_prompt += "\n\nAvailable tools:\n" + tool_desc
-			print("ReactLoop: injected %d tool descriptions into system prompt" % tool_desc.split("\n").size())
+		# Use ToolSelector for smart filtering
+		var selector := Engine.get_singleton("ToolSelector") as Node
+		if selector and selector.has_method("select_tools"):
+			_selected_tools = selector.select_tools(question)
+			if _tool_dispatch.has_method("build_tool_descriptions_filtered"):
+				var tool_desc: String = _tool_dispatch.build_tool_descriptions_filtered(_selected_tools)
+				if not tool_desc.is_empty():
+					full_prompt += "\n\nAvailable tools:\n" + tool_desc
+					print("ReactLoop: injected %d tool descriptions (filtered from %d)" % [_selected_tools.size(), _tool_dispatch.get_registered_tools().size()])
+			else:
+				var tool_desc: String = _tool_dispatch.build_tool_descriptions()
+				if not tool_desc.is_empty():
+					full_prompt += "\n\nAvailable tools:\n" + tool_desc
+					print("ReactLoop: injected %d tool descriptions" % tool_desc.split("\n").size())
+		else:
+			_selected_tools = []
+			var tool_desc: String = _tool_dispatch.build_tool_descriptions()
+			if not tool_desc.is_empty():
+				full_prompt += "\n\nAvailable tools:\n" + tool_desc
+				print("ReactLoop: injected %d tool descriptions" % tool_desc.split("\n").size())
 
 	# Inject memory context (auto-recall)
 	var memory_store := Engine.get_singleton("MemoryStore") as Node
@@ -92,7 +109,11 @@ func _do_step() -> void:
 
 	# Pass tool definitions for structured function calling
 	if _tool_dispatch and _tool_dispatch.has_method("build_openai_tools"):
-		var tools: Array = _tool_dispatch.build_openai_tools()
+		var tools: Array = []
+		if _selected_tools.size() > 0 and _tool_dispatch.has_method("build_openai_tools_filtered"):
+			tools = _tool_dispatch.build_openai_tools_filtered(_selected_tools)
+		else:
+			tools = _tool_dispatch.build_openai_tools()
 		if tools.size() > 0:
 			_api_client.set_tool_definitions(tools)
 

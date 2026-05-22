@@ -17,9 +17,18 @@ func unregister_mcp_client(server_name: String) -> void:
 			to_remove.append(tool_name)
 	for t in to_remove:
 		_tool_map.erase(t)
+	# Notify ToolSelector if available
+	if to_remove.size() > 0:
+		var selector := Engine.get_singleton("ToolSelector") as Node
+		if selector and selector.has_method("on_tools_unregistered"):
+			selector.on_tools_unregistered(to_remove)
 
 func register_tool(tool_name: String, server_name: String, client: Node) -> void:
 	_tool_map[tool_name] = {"server": server_name, "client": client}
+	# Notify ToolSelector if available
+	var selector := Engine.get_singleton("ToolSelector") as Node
+	if selector and selector.has_method("on_tool_registered"):
+		selector.on_tool_registered(tool_name, server_name, client)
 
 func get_registered_tools() -> Dictionary:
 	return _tool_map
@@ -54,7 +63,13 @@ func dispatch(tool_name: String, args_str: String) -> String:
 		tool_executed.emit(tool_name, result)
 		return result
 
-	return "Error: Unknown tool '%s'. Available tools: %s" % [tool_name, ", ".join(_tool_map.keys())]
+	var available: Array = _tool_map.keys()
+	var display: String = ""
+	if available.size() > 20:
+		display = ", ".join(available.slice(0, 20)) + " (+%d more)" % (available.size() - 20)
+	else:
+		display = ", ".join(available)
+	return "Error: Unknown tool '%s'. Available tools: %s" % [tool_name, display]
 
 func _args_to_dict(args: PackedStringArray) -> Dictionary:
 	var args_dict := {}
@@ -117,6 +132,22 @@ func build_tool_descriptions() -> String:
 		lines.append("- %s: %s" % [tool_name, desc])
 	return "\n".join(lines)
 
+
+func build_tool_descriptions_filtered(tool_names: PackedStringArray) -> String:
+	var lines: PackedStringArray = []
+	for tool_name in tool_names:
+		if not _tool_map.has(tool_name):
+			continue
+		var entry: Dictionary = _tool_map[tool_name]
+		var client: Node = entry["client"]
+		var desc := ""
+		if client and client.has_method("get_tool_description"):
+			desc = client.get_tool_description(tool_name)
+		if desc.is_empty():
+			desc = "No description available"
+		lines.append("- %s: %s" % [tool_name, desc])
+	return "\n".join(lines)
+
 func get_tool_schema(tool_name: String) -> Dictionary:
 	if _tool_map.has(tool_name):
 		var entry: Dictionary = _tool_map[tool_name]
@@ -162,6 +193,39 @@ func build_openai_tools() -> Array:
 			}
 		})
 	return tools
+
+
+func build_openai_tools_filtered(tool_names: PackedStringArray) -> Array:
+	var tools: Array = []
+	for tool_name in tool_names:
+		if not _tool_map.has(tool_name):
+			continue
+		var entry: Dictionary = _tool_map[tool_name]
+		var client: Node = entry["client"]
+		var desc: String = ""
+		if client and client.has_method("get_tool_description"):
+			desc = client.get_tool_description(tool_name)
+		if desc.is_empty():
+			desc = "No description available"
+
+		var description_only: String = desc.split("Args:")[0].strip_edges()
+
+		var params: Dictionary = {}
+		if client and client.has_method("get_tool_schema"):
+			params = client.get_tool_schema(tool_name)
+		if params.is_empty():
+			params = _parse_params_from_desc(desc)
+
+		tools.append({
+			"type": "function",
+			"function": {
+				"name": tool_name,
+				"description": description_only,
+				"parameters": params
+			}
+		})
+	return tools
+
 
 func _parse_params_from_desc(desc: String) -> Dictionary:
 	var params := {"type": "object", "properties": {}}

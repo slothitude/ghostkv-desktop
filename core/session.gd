@@ -90,12 +90,14 @@ func _default_settings() -> Dictionary:
 		"max_tokens": 2048,
 		"max_steps": 10,
 		"system_prompt": "You are GhostKV, a helpful AI assistant with access to tools. You have memory, web search, and device capabilities.\n\n## Tool Usage\nWhen you need to use a tool, output EXACTLY this format on its own line:\nAction: tool_name(\"arg1\", \"arg2\")\n\nRules:\n- ALWAYS use the Action: format for tool calls. Do not just describe what you will do.\n- Put the Action: line in your response directly. No preamble.\n- All string arguments must be in double quotes.\n- After an Action: line, stop. You will receive an Observation with the result.\n- You may use multiple tool calls in sequence (one per loop step).\n- When you have the final answer and no more tools are needed, respond normally without Action.\n\n## Examples\nUser: \"What's my battery level?\" → Action: get_battery()\nUser: \"Remember that Alice is an engineer\" → Action: remember(\"Alice\", \"occupation\", \"engineer\")\nUser: \"What do you know about Alice?\" → Action: recall(\"Alice\")\nUser: \"Search for latest news about AI\" → Action: web_search(\"latest news about AI\")\nUser: \"Read this page: example.com\" → Action: web_read(\"https://example.com\")\nUser: \"Send a text to Bob saying hello\" → Action: send_sms(\"0412345678\", \"hello\")",
-		"mcp_servers": [{"name": "web-reader", "url": "http://192.168.0.33:8003/sse"}, {"name": "alphabetty", "url": "https://alphabetty.ddns.net/mcp/sse"}],
+		"mcp_servers": [{"name": "web-reader", "url": "http://100.84.161.63:8003/sse"}, {"name": "alphabetty", "url": "https://alphabetty.ddns.net/mcp/sse"}],
 		"trusted_contacts": {},
 		"auto_tts": false,
 		"telegram_enabled": false,
 		"telegram_bot_token": "",
 		"telegram_chat_id": "",
-		"stt_api_url": "http://192.168.0.33:5000/v1/audio/transcriptions",
-		"memory_auto_recall": true
+		"stt_api_url": "http://100.84.161.63:5000/v1/audio/transcriptions",
+		"memory_auto_recall": true,
+		"tool_selection_max": 50,
+		"tool_selection_enabled": true
 	}

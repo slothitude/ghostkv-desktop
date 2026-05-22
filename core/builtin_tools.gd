@@ -1231,7 +1231,7 @@ func _tool_web_search(args: Dictionary) -> String:
 		return "Error: web_search requires a query"
 
 	var http := _get_web_http()
-	var searx_url := "http://192.168.0.33:8888/search?q=%s&format=json&categories=general&language=en" % query.uri_encode()
+	var searx_url := "http://100.119.172.102:8888/search?q=%s&format=json&categories=general&language=en" % query.uri_encode()
 	var err := http.request(searx_url, [], HTTPClient.METHOD_GET)
 	if err != OK:
 		return "Error: Failed to send search request"
@@ -1267,7 +1267,7 @@ func _tool_web_read(args: Dictionary) -> String:
 
 	var http := _get_web_http()
 	# Use web-reader MCP server's reader endpoint directly
-	var reader_url := "http://192.168.0.33:8003/read?url=%s" % url.uri_encode()
+	var reader_url := "http://100.84.161.63:8003/read?url=%s" % url.uri_encode()
 	var err := http.request(reader_url, [], HTTPClient.METHOD_GET)
 	if err != OK:
 		return "Error: Failed to send read request"
