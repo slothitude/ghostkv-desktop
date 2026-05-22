@@ -25,28 +25,34 @@ func get_registered_tools() -> Dictionary:
 	return _tool_map
 
 func dispatch(tool_name: String, args_str: String) -> String:
-	# Parse args: "arg1", "arg2" -> PackedStringArray
-	var args := _parse_args(args_str)
-
 	if _tool_map.has(tool_name):
 		var entry: Dictionary = _tool_map[tool_name]
 		var client: Node = entry["client"]
 		var server: String = entry["server"]
 
-		# Built-in tools (server == "builtin")
-		if server == "builtin" and client and client.has_method("call_tool"):
-			var args_dict := _args_to_dict(args)
-			var result: String = await client.call_tool(tool_name, args_dict)
-			tool_executed.emit(tool_name, result)
-			return result
+		if not client or not client.has_method("call_tool"):
+			return "Error: client for '%s' not available" % tool_name
 
-		# MCP tools
-		if client and client.has_method("call_tool"):
-			var args_dict := _args_to_dict(args)
-			var result: String = await client.call_tool(tool_name, args_dict)
-			tool_executed.emit(tool_name, result)
-			return result
-		return "Error: MCP client for '%s' not available" % tool_name
+		# Parse arguments
+		var args_dict := {}
+		if server != "builtin":
+			# MCP tools: try JSON args first (structured tool calling from LLM)
+			var json := JSON.new()
+			var trimmed := args_str.strip_edges()
+			if trimmed.begins_with("{") and json.parse(trimmed) == OK and json.data is Dictionary:
+				args_dict = json.data
+			else:
+				# Try named args: key="value", key2="value2"
+				var named := _parse_named_args(args_str)
+				if not named.is_empty():
+					args_dict = named
+		if args_dict.is_empty():
+			var args := _parse_args(args_str)
+			args_dict = _args_to_dict(args)
+
+		var result: String = await client.call_tool(tool_name, args_dict)
+		tool_executed.emit(tool_name, result)
+		return result
 
 	return "Error: Unknown tool '%s'. Available tools: %s" % [tool_name, ", ".join(_tool_map.keys())]
 
@@ -79,6 +85,23 @@ func _parse_args(args_str: String) -> PackedStringArray:
 		var trimmed: String = part.strip_edges()
 		if not trimmed.is_empty():
 			result.append(trimmed)
+	return result
+
+func _parse_named_args(args_str: String) -> Dictionary:
+	# Parse key="value" or key=value pairs from args string
+	var result := {}
+	var regex := RegEx.new()
+	regex.compile('(\\w+)\\s*=\\s*"([^"]*)"')
+	var matches = regex.search_all(args_str)
+	for m in matches:
+		result[m.get_string(1)] = m.get_string(2)
+	if not result.is_empty():
+		return result
+	# Try unquoted: key=value
+	regex.compile('(\\w+)\\s*=\\s*([^,]+)')
+	matches = regex.search_all(args_str)
+	for m in matches:
+		result[m.get_string(1)] = m.get_string(2).strip_edges()
 	return result
 
 func build_tool_descriptions() -> String:
@@ -122,7 +145,14 @@ func build_openai_tools() -> Array:
 			desc = "No description available"
 
 		var description_only: String = desc.split("Args:")[0].strip_edges()
-		var params := _parse_params_from_desc(desc)
+
+		# Use MCP inputSchema if available, otherwise parse from description
+		var params: Dictionary = {}
+		if client and client.has_method("get_tool_schema"):
+			params = client.get_tool_schema(tool_name)
+		if params.is_empty():
+			params = _parse_params_from_desc(desc)
+
 		tools.append({
 			"type": "function",
 			"function": {

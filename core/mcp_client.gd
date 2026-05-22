@@ -32,7 +32,13 @@ func _ready() -> void:
 func connect_server(server_name: String, url: String) -> void:
 	_server_name = server_name
 	sse_url = url
-	_base_url = url.replace("/sse", "")
+	# Extract origin (scheme + host + port) for constructing message endpoint
+	var parsed := _parse_url(url)
+	var scheme: String = "https" if parsed["tls"] else "http"
+	_base_url = scheme + "://" + parsed["host"]
+	var port: int = parsed["port"]
+	if (parsed["tls"] and port != 443) or (not parsed["tls"] and port != 80):
+		_base_url += ":" + str(port)
 	_retry_count = 0
 	_do_connect()
 
@@ -114,9 +120,11 @@ func _do_sse_handshake() -> void:
 	# Start polling SSE for responses (runs in background via await loop)
 	_poll_sse()
 
-	# Discover tools (runs concurrently since _poll_sse yields via await)
-	# Need to wait a frame for polling to start
+	# MCP protocol requires initialize handshake before calling tools/list
 	await get_tree().process_frame
+	await _initialize_mcp()
+
+	# Discover tools (runs concurrently since _poll_sse yields via await)
 	_discover_tools()
 
 func _poll_sse() -> void:
@@ -130,6 +138,8 @@ func _poll_sse() -> void:
 		await get_tree().process_frame
 
 func _process_sse_buffer() -> void:
+	# Normalize \r\n to \n for consistent parsing
+	_sse_buffer = _sse_buffer.replace("\r\n", "\n")
 	# Process complete SSE events (separated by blank lines)
 	while true:
 		var event_end := _sse_buffer.find("\n\n")
@@ -222,14 +232,51 @@ func _handle_connection_failure(msg: String) -> void:
 func _on_retry() -> void:
 	_do_connect()
 
+func _initialize_mcp() -> void:
+	_request_id += 1
+	var init_id: int = _request_id
+	var body := {
+		"jsonrpc": "2.0",
+		"id": init_id,
+		"method": "initialize",
+		"params": {
+			"protocolVersion": "2024-11-05",
+			"capabilities": {},
+			"clientInfo": {"name": "ghostkv", "version": "1.0"}
+		}
+	}
+	_send_jsonrpc(body)
+
+	# Wait for initialize response (check both int and float keys — JSON may parse id as float)
+	var timeout := Time.get_ticks_msec() + 5000
+	while true:
+		if _pending_results.has(init_id) or _pending_results.has(float(init_id)):
+			break
+		if Time.get_ticks_msec() > timeout:
+			push_warning("MCPClient[%s]: initialize timeout, keys=%s" % [_server_name, str(_pending_results.keys())])
+			break
+		await get_tree().process_frame
+	# Clean up init result
+	var key = init_id if _pending_results.has(init_id) else float(init_id)
+	if _pending_results.has(key):
+		_pending_results.erase(key)
+		print("MCPClient[%s]: initialized OK" % _server_name)
+
+	# Send initialized notification (no id — fire and forget)
+	var notif := {
+		"jsonrpc": "2.0",
+		"method": "notifications/initialized"
+	}
+	_send_jsonrpc(notif)
+	await get_tree().process_frame
+
 func _discover_tools() -> void:
 	print("MCPClient[%s]: _discover_tools endpoint=%s" % [_server_name, _message_endpoint])
 	_request_id += 1
 	var body := {
 		"jsonrpc": "2.0",
 		"id": _request_id,
-		"method": "tools/list",
-		"params": {}
+		"method": "tools/list"
 	}
 	_send_jsonrpc(body)
 
@@ -252,13 +299,14 @@ func call_tool(name: String, args: Dictionary) -> String:
 
 	# Wait for response via SSE (with timeout)
 	var timeout := Time.get_ticks_msec() + 30000
-	while not _pending_results.has(req_id):
+	while not _pending_results.has(req_id) and not _pending_results.has(float(req_id)):
 		if Time.get_ticks_msec() > timeout:
 			return "Error: Tool call timed out"
 		await get_tree().process_frame
 
-	var result_entry: Dictionary = _pending_results[req_id]
-	_pending_results.erase(req_id)
+	var key = req_id if _pending_results.has(req_id) else float(req_id)
+	var result_entry: Dictionary = _pending_results[key]
+	_pending_results.erase(key)
 	var data: Dictionary = result_entry["data"]
 
 	if data.has("error"):
@@ -289,23 +337,29 @@ func _send_jsonrpc(body: Dictionary) -> void:
 
 	var post_client := HTTPClient.new()
 	var tls_options: TLSOptions = TLSOptions.client() if use_tls else null
-	post_client.connect_to_host(host, port, tls_options)
+	var err := post_client.connect_to_host(host, port, tls_options)
+	if err != OK:
+		push_warning("MCPClient[%s]: POST connect_to_host failed: %s" % [_server_name, err])
+		return
 
 	# Wait for connection
 	var timeout := Time.get_ticks_msec() + 5000
 	while post_client.get_status() == HTTPClient.STATUS_CONNECTING or post_client.get_status() == HTTPClient.STATUS_RESOLVING:
 		post_client.poll()
 		if Time.get_ticks_msec() > timeout:
+			push_warning("MCPClient[%s]: POST connect timeout" % _server_name)
 			return
 		await get_tree().process_frame
 
 	if post_client.get_status() != HTTPClient.STATUS_CONNECTED:
+		push_warning("MCPClient[%s]: POST not connected, status=%d" % [_server_name, post_client.get_status()])
 		return
 
 	var json_body := JSON.stringify(body)
 	var headers := ["Host: %s" % host, "Content-Type: application/json", "Content-Length: %d" % json_body.length()]
-	var err := post_client.request(HTTPClient.METHOD_POST, path_and_query, headers, json_body)
+	err = post_client.request(HTTPClient.METHOD_POST, path_and_query, headers, json_body)
 	if err != OK:
+		push_warning("MCPClient[%s]: POST request failed: %s" % [_server_name, err])
 		return
 
 	# Wait for response (just to complete the request — actual result comes via SSE)
@@ -313,6 +367,7 @@ func _send_jsonrpc(body: Dictionary) -> void:
 	while post_client.get_status() == HTTPClient.STATUS_REQUESTING:
 		post_client.poll()
 		if Time.get_ticks_msec() > timeout:
+			push_warning("MCPClient[%s]: POST response timeout" % _server_name)
 			break
 		await get_tree().process_frame
 
@@ -320,6 +375,9 @@ func _send_jsonrpc(body: Dictionary) -> void:
 	if post_client.get_status() == HTTPClient.STATUS_BODY:
 		post_client.poll()
 		post_client.read_response_body_chunk()
+		print("MCPClient[%s]: POST complete, got response" % _server_name)
+	else:
+		push_warning("MCPClient[%s]: POST unexpected status=%d" % [_server_name, post_client.get_status()])
 
 	post_client.close()
 
